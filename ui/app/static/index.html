@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrismVox</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script>
+    // Apply theme before first paint to avoid flash
+    (function() {
+      const saved = localStorage.getItem('theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/app.css">
+
+</head>
+<body>
+
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="brand">
+    <h1><img class="logo" src="/static/logo.svg" alt="PrismVox" /> PrismVox</h1>
+    <span class="subtitle" id="app-subtitle">Voice &amp; telephony</span>
+  </div>
+  <nav class="side-nav">
+    <button class="active" onclick="showTab('status',this)">
+      <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Overview
+    </button>
+    <button onclick="showTab('setup',this)">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </button>
+    <button onclick="showTab('rag',this)">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Knowledge Base
+    </button>
+    <button onclick="showTab('mcp',this)">
+      <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      MCP
+    </button>
+    <button onclick="showTab('contacts',this)">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Directory
+    </button>
+    <button onclick="showTab('outbound',this)">
+      <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/><polyline points="15 5 21 5"/><polyline points="18 2 18 8"/></svg>
+      Outbound Calls
+    </button>
+    <button onclick="showTab('logs',this)">
+      <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      Call Logs
+    </button>
+    <button onclick="showTab('conversations',this)">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Conversations
+    </button>
+    <button onclick="showTab('chat',this)">
+      <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      Chat
+    </button>
+  </nav>
+  <div class="sidebar-footer">
+    <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn">
+      <svg viewBox="0 0 24 24" id="theme-icon-moon" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg viewBox="0 0 24 24" id="theme-icon-sun" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <span id="theme-label">Theme</span>
+    </button>
+  </div>
+</aside>
+
+<main class="main">
+<header class="page-header"><h2 id="page-title">Overview</h2><span>PrismVox console</span></header>
+
+<!-- ── STATUS ── -->
+<div id="tab-status" class="tab-content active">
+
+  <!-- Service health -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
+    <h3 style="margin:0">Services</h3>
+    <button class="outline" onclick="loadStatus()">↻ Refresh</button>
+  </div>
+  <div class="status-grid">
+    <div class="status-card"><h4>Database</h4><span class="badge badge-loading" id="health-db">…</span></div>
+    <div class="status-card"><h4>TTS</h4><span class="badge badge-loading" id="health-tts">…</span></div>
+    <div class="status-card"><h4>STT</h4><span class="badge badge-loading" id="health-stt">…</span></div>
+    <div class="status-card"><h4>LLM</h4><span class="badge badge-loading" id="health-llm">…</span></div>
+    <div class="status-card"><h4>SIP</h4><span class="badge badge-loading" id="health-sip">…</span></div>
+    <div class="status-card"><h4>Agent</h4><span class="badge badge-loading" id="health-agent">…</span></div>
+  </div>
+
+  <!-- Big stat cards -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value" id="rt-uptime">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Calls today</div>
+      <div class="stat-value" id="rt-today">—</div>
+      <div class="stat-sub" id="rt-since-sub">— since startup</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">All-time total</div>
+      <div class="stat-value" id="rt-total">—</div>
+      <div class="stat-sub">calls</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Average duration</div>
+      <div class="stat-value" id="rt-avg">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Transfer rate</div>
+      <div class="stat-value" id="rt-xfer">—</div>
+      <div class="stat-sub">of calls</div>
+    </div>
+  </div>
+
+  <!-- Chart: calls per day (full width) -->
+  <div class="chart-card" style="margin-bottom:.5rem">
+    <div class="chart-title">Calls per day — last 7 days</div>
+    <div style="position:relative;height:170px"><canvas id="chart-days"></canvas></div>
+  </div>
+
+  <!-- Charts: donut + top callers -->
+  <div class="charts-row-2">
+    <div class="chart-card">
+      <div class="chart-title">Call outcomes</div>
+      <div style="position:relative;height:195px"><canvas id="chart-reasons"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Top callers — last 30 days</div>
+      <div style="position:relative;height:195px"><canvas id="chart-callers"></canvas></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── AGENT ── -->
+<div id="tab-setup" class="tab-content">
+  <div class="subtabs">
+    <button class="active" onclick="showSubTab('sip',this)">SIP / Telephony</button>
+    <button onclick="showSubTab('agentcfg',this)">Agent</button>
+    <button onclick="showSubTab('dictionary',this)">Dictionary</button>
+  </div>
+
+  <!-- ── SIP sub-tab ── -->
+  <div id="subtab-sip" class="subtab-content active">
+    <h3>SIP Trunk / Telephony</h3>
+    <p class="muted" style="margin-top:-.4rem;font-size:.8rem">
+      Connection to the SBC / BroadWorks. "Save" stores the config; "Apply" pushes it
+      to Asterisk and reloads the trunk (without dropping calls in progress).
+    </p>
+    <form id="sip-form" onsubmit="saveSip(event)">
+      <label>
+        Registrar (host)
+        <input type="text" id="sip-sip_registrar" placeholder="sbc.example.com">
+        <small class="hint">Hostname of the SIP SBC/registrar.</small>
+      </label>
+      <label>
+        Registrar IP
+        <input type="text" id="sip-sip_registrar_ip" placeholder="1.2.3.4">
+        <small class="hint">SBC IP address (resolution + matching of inbound INVITEs).</small>
+      </label>
+      <label>
+        Match (optional)
+        <input type="text" id="sip-sip_registrar_match" placeholder="default = registrar IP">
+        <small class="hint">Allowed inbound CIDR/IP. Leave empty to reuse the registrar IP.</small>
+      </label>
+      <div style="display:flex;gap:.8rem;flex-wrap:wrap">
+        <label style="flex:2;min-width:180px">
+          SIP domain
+          <input type="text" id="sip-sip_domain" placeholder="example.com">
+        </label>
+        <label style="flex:1;min-width:150px">
+          Transport
+          <select id="sip-sip_transport_mode" onchange="onSipTransportModeChange()">
+            <option value="tls">TLS + SRTP (encrypted)</option>
+            <option value="udp">UDP (plain, no encryption)</option>
+          </select>
+        </label>
+      </div>
+      <div style="display:flex;gap:.8rem;flex-wrap:wrap">
+        <label style="flex:1;min-width:90px" id="sip-tls-port-label">
+          TLS port
+          <input type="text" id="sip-sip_tls_port" placeholder="5061">
+        </label>
+        <label style="flex:1;min-width:90px" id="sip-udp-port-label">
+          UDP port
+          <input type="text" id="sip-sip_udp_port" placeholder="5060">
+          <small class="hint">Only used in UDP transport mode.</small>
+        </label>
+      </div>
+      <label>
+        Username
+        <input type="text" id="sip-sip_username" placeholder="phoneagent">
+      </label>
+      <label>
+        Password
+        <input type="password" id="sip-sip_password" placeholder="(unchanged)" autocomplete="new-password">
+        <small class="hint">Trunk authentication password. Never returned by the API: leave empty to keep the saved password, enter a value to replace it.</small>
+      </label>
+      <label>
+        Display name (From) — outbound calls
+        <input type="text" id="sip-sip_callerid_name" placeholder="(empty = no display name)">
+        <small class="hint">Display name in the From header of outbound calls. Leave empty for a clean nameless From (avoids "Anonymous").</small>
+      </label>
+      <label>
+        Transfer method
+        <select id="sip-sip_transfer_method">
+          <option value="bridge">bridge — Asterisk stays in the media (Dial)</option>
+          <option value="refer">refer — SIP REFER to the network core (PBX/Centrex style)</option>
+        </select>
+        <small class="hint">Applies to direct (blind) transfers. "refer" sends a REFER (Refer-To = target) and takes Asterisk out of the call. Attended transfers stay bridged (the agent must announce before connecting).</small>
+      </label>
+      <fieldset>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <strong style="font-size:.85rem">Line state</strong>
+          <span id="sip-endpoint-state" class="badge badge-loading">…</span>
+          <button type="button" class="outline" onclick="loadSipStatus()">↻ Refresh</button>
+          <small class="hint" style="margin:0">PJSIP endpoint state (indicative).</small>
+        </div>
+      </fieldset>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button type="button" onclick="applySip()" id="sip-apply-btn">⟳ Apply (reload the trunk)</button>
+        <button type="button" class="outline" onclick="loadSip()">↻ Reset</button>
+      </div>
+      <p id="sip-status" style="font-size:.78rem;margin-top:.4rem;display:none"></p>
+    </form>
+  </div>
+
+  <!-- ── Agent sub-tab ── -->
+  <div id="subtab-agentcfg" class="subtab-content">
+  <h3>Agent configuration</h3>
+  <details style="margin:0 0 12px"><summary>Speech providers</summary>
+    <iframe id="speech-providers" title="Speech providers" src="/api/voice/editor" style="width:100%;height:220px;border:0;margin-top:8px"></iframe>
+  </details>
+  <form id="agent-form" onsubmit="saveConfig(event)">
+    <label>
+      System Prompt — inbound calls
+      <textarea id="cfg-system_prompt" rows="5"></textarea>
+      <small class="hint">LLM instructions for inbound calls. No markdown, short sentences (spoken aloud).</small>
+    </label>
+    <label>
+      Greeting — inbound calls
+      <input type="text" id="cfg-greeting">
+      <small class="hint">Phrase spoken when an inbound call is answered.</small>
+    </label>
+    <label>
+      System Prompt — outbound calls
+      <textarea id="cfg-outbound_system_prompt" rows="6"></textarea>
+      <small class="hint">Instructions for agent-initiated calls (Outbound Calls tab). Each call's mission is appended automatically under a "Mission" section. No greeting: the opening is generated from the mission.</small>
+    </label>
+    <fieldset>
+      <legend>LLM models</legend>
+      <label>
+        Model — standard (inbound calls &amp; chat)
+        <input type="text" id="cfg-llm_model_standard" placeholder="Model ID from your API">
+        <small class="hint">Small fast model: the caller's experience comes first. Alias as exposed by the LLM gateway (LiteLLM). Empty = container default.</small>
+      </label>
+      <label>
+        Model — on-call (outbound calls)
+        <input type="text" id="cfg-llm_model_oncall" placeholder="Model ID from your API">
+        <small class="hint">More capable model for on-call missions: the colleagues being called tolerate a slower pace.</small>
+      </label>
+    </fieldset>
+    <details style="margin-bottom:10px"><summary>Model API URLs (optional)</summary>
+      <label>Standard model API root<input type="url" id="cfg-llm_url_standard" placeholder="Empty = deployment gateway"></label>
+      <label>On-call model API root<input type="url" id="cfg-llm_url_oncall" placeholder="Empty = deployment gateway"></label>
+      <small class="hint">Include /v1. Separate endpoints receive no deployment gateway API key.</small>
+    </details>
+    <label>
+      Dialog turns — attended transfer
+      <input type="number" id="cfg-transfer_dialog_turns" min="1" max="10" step="1" placeholder="3">
+      <small class="hint">Maximum exchanges with the recipient to announce the call (announcement included). The agent re-asks when the answer is ambiguous: more turns = more reliable decision, but the caller waits on hold music. Empty = 3.</small>
+    </label>
+    <fieldset>
+      <legend>Features</legend>
+      <label><input type="checkbox" id="cfg-rag_enabled" role="switch"> Enable knowledge search</label>
+      <label><input type="checkbox" id="cfg-mcp_enabled" role="switch"> Enable MCP tools</label>
+    </fieldset>
+    <fieldset>
+      <legend>Receptionist voice</legend>
+      <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+        <select id="tts-voice-select" style="margin:0;width:auto;min-width:180px" onchange="setTTSVoice(this.value)"></select>
+        <button type="button" class="outline" id="tts-preview-btn" onclick="previewTTSVoice()">▶ Listen</button>
+        <span id="tts-voice-status" class="muted"></span>
+      </div>
+      <div id="rec-script" style="margin-top:.6rem;padding:.6rem .75rem;border-left:3px solid var(--accent);background:var(--surface2);border-radius:6px;font-size:.84rem;line-height:1.5">
+        <div class="detail-label" style="margin-bottom:.25rem">Read this while recording</div>
+        “Hello and welcome! How can I help you today? Tell me what you need, and I will make sure your message reaches the right person.”
+      </div>
+      <div style="display:flex;gap:.4rem;align-items:center;margin-top:.5rem;flex-wrap:wrap">
+        <button type="button" class="outline" id="rec-btn" onclick="toggleRecord()">🎙 Record</button>
+        <button type="button" class="outline" id="rec-file-btn" onclick="document.getElementById('rec-file').click()">📁 Upload a .wav file</button>
+        <input type="file" id="rec-file" accept="audio/wav,audio/x-wav,.wav" style="display:none" onchange="onVoiceFileSelected(event)">
+        <input type="text" id="rec-name" placeholder="Voice name" style="margin:0;flex:1;min-width:140px">
+        <button type="button" class="outline" id="rec-add" onclick="addRecordedVoice()" disabled>⬆ Add this voice</button>
+      </div>
+      <audio id="rec-preview" controls style="display:none;width:100%;margin-top:.4rem"></audio>
+      <div id="mic-insecure-hint" style="display:none;margin-top:.4rem;padding:.5rem .75rem;border-left:3px solid var(--danger);background:var(--surface2);border-radius:6px;font-size:.84rem"></div>
+      <small class="hint">Record yourself reading the phrase above (5–10 s, clear voice, no background noise) — or upload a clean pre-recorded .wav — it covers varied sounds and natural intonation for better cloning. Play it back, name the voice, then add it. The change is immediate, no restart. <em>(Microphone only accessible over https or on localhost — upload a file instead if you can't switch.)</em></small>
+    </fieldset>
+    <fieldset>
+      <legend>Receptionist phrases</legend>
+      <small class="hint" style="margin:0 0 .6rem;display:block">
+        Phrases spoken by the code during the call flow.
+        <span class="ptag ptag-always">always</span> = always played at this point of the call.
+        <span class="ptag ptag-fallback">fallback</span> = the LLM normally handles it; this phrase only fires as a fallback (the LLM didn't, or failure/timeout).
+      </small>
+      <label>Nudge after silence <span class="ptag ptag-always">always</span>
+        <input type="text" id="cfg-phrase_still_there"></label>
+      <label>Contact unreachable or unknown <span class="ptag ptag-always">always</span>
+        <input type="text" id="cfg-phrase_unknown_contact">
+        <small class="hint">%s = requested contact name.</small></label>
+      <label>Transfer announcement (direct transfer) <span class="ptag ptag-always">always</span>
+        <input type="text" id="cfg-phrase_transfer_now"></label>
+      <label>Hold (attended transfer) <span class="ptag ptag-always">always</span>
+        <input type="text" id="cfg-phrase_hold"></label>
+      <label>Connecting (attended transfer accepted) <span class="ptag ptag-always">always</span>
+        <input type="text" id="cfg-phrase_connecting">
+        <small class="hint">%s = contact name (e.g. "%s is taking your call, connecting you now.").</small></label>
+      <label>Closing farewell (before hanging up) <span class="ptag ptag-fallback">fallback</span>
+        <input type="text" id="cfg-phrase_farewell">
+        <small class="hint">Played only if the LLM didn't say goodbye itself.</small></label>
+      <label>Ask the caller's name (attended transfer) <span class="ptag ptag-fallback">fallback</span>
+        <input type="text" id="cfg-phrase_ask_name">
+        <small class="hint">Played only if the LLM hasn't already asked for the name.</small></label>
+      <label>Ask the reason for the call (attended transfer) <span class="ptag ptag-fallback">fallback</span>
+        <input type="text" id="cfg-phrase_ask_reason">
+        <small class="hint">Played only if the LLM hasn't already asked for the reason.</small></label>
+      <label>Announcement to the recipient (attended transfer) <span class="ptag ptag-fallback">fallback</span>
+        <input type="text" id="cfg-phrase_announce">
+        <small class="hint">The LLM generates the announcement while ringing; this phrase is the fallback (failure/timeout). <b>Two %s</b>: 1st = caller name, 2nd = reason for the call.</small></label>
+    </fieldset>
+    <hr>
+    <label>
+      Admin Chat prompt
+      <textarea id="cfg-admin_chat_prompt" rows="3"></textarea>
+      <small class="hint">Base instructions for the admin chat (Admin Chat tab).</small>
+    </label>
+    <div class="actions">
+      <button type="submit">Save</button>
+      <button type="button" class="outline" onclick="loadConfig()">↻ Reset</button>
+    </div>
+    <p id="agent-status" style="color:var(--success);display:none;font-size:.78rem;margin-top:.4rem">✓ Saved</p>
+  </form>
+  </div>
+
+  <!-- ── Dictionary sub-tab ── -->
+  <div id="subtab-dictionary" class="subtab-content">
+  <h3>Dictionary</h3>
+  <p class="muted" style="margin-bottom:.75rem">Domain vocabulary shared by transcription (STT) and speech synthesis (TTS). Changes take effect on the next call — no restart. Separate terms with spaces or commas.</p>
+  <form id="dict-form" onsubmit="saveDict(event)">
+    <label>
+      Proper nouns to transcribe correctly <span class="ptag ptag-always">STT</span>
+      <textarea id="dict-whisper_hotwords" rows="3" disabled></textarea>
+      <small class="hint">Agent name, contact names, jargon… Helps recognition distinguish names such as "Acme" from similar-sounding words. Put contact names here especially (makes transfers more reliable).</small>
+    </label>
+    <label>
+      Acronyms to spell out <span class="ptag ptag-always">TTS</span>
+      <textarea id="dict-tts_spell_words" rows="3" disabled></textarea>
+      <small class="hint">Always spelled letter by letter, whatever the case (e.g. <code>voip</code>, <code>IPv4</code>). Complements the automatic all-caps acronym detection.</small>
+    </label>
+    <label>
+      Acronyms to read as words <span class="ptag ptag-always">TTS</span>
+      <textarea id="dict-tts_spell_exceptions" rows="3" disabled></textarea>
+      <small class="hint">Exceptions read normally instead of spelled out (e.g. <code>OK</code>, <code>CORE</code>).</small>
+    </label>
+    <div class="actions">
+      <button type="button" id="dict-edit-btn" onclick="toggleDictEdit()">✏️ Edit</button>
+      <button type="submit" id="dict-save-btn" style="display:none">Save</button>
+      <button type="button" class="outline" id="dict-cancel-btn" style="display:none" onclick="loadDict()">Cancel</button>
+    </div>
+    <p id="dict-status" style="color:var(--success);display:none;font-size:.78rem;margin-top:.4rem">✓ Saved — active on the next call.</p>
+  </form>
+  </div>
+</div>
+
+<!-- ── RAG ── -->
+<div id="tab-rag" class="tab-content">
+  <h3>Knowledge collections</h3>
+  <p class="muted" style="margin-bottom:.75rem">Semantic search (embeddings + pgvector): on each turn, only the passages most relevant to the caller's question are injected. Documents are indexed automatically on upload. Formats: .txt, .md, .pdf.</p>
+  <div class="actions" style="margin-bottom:.75rem">
+    <button type="button" class="outline" onclick="embedAll()" id="embed-all-btn">↻ Re-index embeddings</button>
+    <span id="embed-all-status" class="muted" style="font-size:.78rem"></span>
+  </div>
+  <div id="collections-list"></div>
+  <hr>
+  <details>
+    <summary>+ New collection</summary>
+    <form id="new-collection-form" onsubmit="createCollection(event)" style="margin-top:.5rem">
+      <div class="inline-form">
+        <label style="flex:1">Name <input type="text" id="new-col-name" placeholder="e.g. Product FAQ" required></label>
+        <label style="flex:2">Description <input type="text" id="new-col-desc" placeholder="Optional"></label>
+        <button type="submit" style="flex:0;align-self:flex-end">Create</button>
+      </div>
+    </form>
+  </details>
+</div>
+
+<!-- ── MCP ── -->
+<div id="tab-mcp" class="tab-content">
+  <h3>MCP Servers</h3>
+  <p class="muted" style="margin-bottom:.75rem">Connect tool servers over HTTP or SSE. Changes take effect on the next call or text turn; an active call keeps its current tools.</p>
+  <div id="mcp-list"></div>
+  <hr>
+  <details>
+    <summary>+ Add an MCP server</summary>
+    <form id="new-mcp-form" onsubmit="createMCP(event)" style="margin-top:.5rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
+        <label>Name <input type="text" id="mcp-name" placeholder="my-server" required></label>
+        <label>Type
+          <select id="mcp-type" onchange="mcpTypeChanged()">
+            <option value="stdio" disabled>Stdio (not supported)</option>
+            <option value="sse">Legacy SSE</option>
+            <option value="http" selected>Streamable HTTP</option>
+          </select>
+        </label>
+      </div>
+      <div id="mcp-stdio-fields" style="display:none">
+        <label>Command (JSON array)
+          <input type="text" id="mcp-command" placeholder='["npx", "-y", "@modelcontextprotocol/server-name"]'>
+          <small class="hint">e.g. <code>["npx","-y","@mcp/server-filesystem","/data"]</code></small>
+        </label>
+      </div>
+      <div id="mcp-http-fields">
+        <label>URL <input type="text" id="mcp-url" placeholder="http://my-server:8080/mcp"></label>
+        <label>Bearer token <span class="muted">(opt.)</span>
+          <input type="password" id="mcp-auth-token" placeholder="sk-…">
+          <small class="hint">Sent as <code>Authorization: Bearer &lt;token&gt;</code></small>
+        </label>
+      </div>
+      <button type="submit">Add</button>
+    </form>
+  </details>
+</div>
+
+<!-- ── DIRECTORY ── -->
+<div id="tab-contacts" class="tab-content">
+  <h3>Phone directory</h3>
+  <p class="muted" style="margin-bottom:.75rem">Enabled contacts are injected into the context on every call to allow transfers by name.</p>
+  <div id="contacts-list"></div>
+  <hr>
+  <details id="new-contact-details">
+    <summary>+ Add a contact</summary>
+    <form id="new-contact-form" onsubmit="createContact(event)" style="margin-top:.5rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto auto;gap:.4rem;align-items:flex-end">
+        <label style="margin:0">Name <input type="text" id="contact-name" placeholder="Jamie Taylor" required></label>
+        <label style="margin:0">Number <input type="text" id="contact-phone" placeholder="1001 or +33612…" required></label>
+        <label style="margin:0">Notes <span class="muted">(opt.)</span> <input type="text" id="contact-notes" placeholder="HR manager…"></label>
+        <label style="margin:0">Transfer
+          <select id="contact-ttype" style="padding:.28rem .4rem;font-size:.8rem">
+            <option value="blind">blind</option>
+            <option value="attended">attended</option>
+          </select>
+        </label>
+        <button type="submit" style="align-self:flex-end">Add</button>
+      </div>
+    </form>
+  </details>
+</div>
+
+<!-- ── OUTBOUND CALLS ── -->
+<div id="tab-outbound" class="tab-content">
+  <h3>Outbound calls</h3>
+  <p class="muted" style="margin-bottom:.75rem">The agent dials these calls itself (one at a time, never during another call) and carries out the described mission. The outcome is summarized after each call.</p>
+
+  <details id="new-call-details" style="margin-bottom:.75rem">
+    <summary>+ Schedule a call</summary>
+    <form id="new-call-form" onsubmit="createOutboundCall(event)" style="margin-top:.5rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.4rem;align-items:flex-end">
+        <label style="margin:0">Number <input type="text" id="call-phone" placeholder="+33612… or 1001" required></label>
+        <label style="margin:0">Party <span class="muted">(opt.)</span> <input type="text" id="call-contact" placeholder="Alex Morgan"></label>
+        <label style="margin:0">When <span class="muted">(empty = now)</span> <input type="datetime-local" id="call-when" onclick="this.showPicker && this.showPicker()"></label>
+        <label style="margin:0">Attempts
+          <select id="call-attempts" style="padding:.28rem .4rem;font-size:.8rem">
+            <option value="1">1</option>
+            <option value="3" selected>3</option>
+            <option value="5">5</option>
+          </select>
+        </label>
+      </div>
+      <label style="margin:.5rem 0 0">Mission
+        <textarea id="call-mission" rows="3" placeholder="e.g. Call Alex to confirm his appointment tomorrow at 9am. If he can't, note the slot he prefers." required></textarea>
+      </label>
+      <button type="submit" style="margin-top:.5rem">Schedule the call</button>
+    </form>
+  </details>
+
+  <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem">
+    <button onclick="loadOutbound()">↻ Refresh</button>
+    <span id="calls-count" class="muted"></span>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="ctable" id="calls-table">
+      <thead><tr>
+        <th>Status</th><th>Number</th><th>Party</th><th>Mission</th><th>Scheduled</th><th>Tries</th><th>Outcome</th><th></th>
+      </tr></thead>
+      <tbody id="calls-body">
+        <tr><td colspan="8"><span class="muted">Loading…</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── CALL LOGS ── -->
+<div id="tab-logs" class="tab-content">
+  <h3>Call history</h3>
+  <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem">
+    <button onclick="loadLogs(0)">↻ Refresh</button>
+    <span id="logs-count" class="muted"></span>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="ctable" id="logs-table">
+      <thead><tr>
+        <th>Direction</th><th>Number</th><th>Date / Time</th><th>Duration</th><th>Call end</th>
+      </tr></thead>
+      <tbody id="logs-body">
+        <tr><td colspan="5"><span class="muted">Loading…</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;gap:.4rem;margin-top:.65rem;align-items:center">
+    <button id="logs-prev" onclick="logsPage(-1)" disabled>← Previous</button>
+    <span id="logs-page" class="muted"></span>
+    <button id="logs-next" onclick="logsPage(1)" disabled>Next →</button>
+  </div>
+</div>
+
+<!-- ── CONVERSATIONS (text channels) ── -->
+<div id="tab-conversations" class="tab-content">
+  <h3>Conversations</h3>
+  <p class="muted" style="margin-top:-.4rem;margin-bottom:.65rem">
+    Text chat sessions (the "Test the agent" tab, and external channels via N8N — WhatsApp, Telegram…). Distinct from the call history.
+  </p>
+  <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem">
+    <button onclick="loadConversations(0)">↻ Refresh</button>
+    <span id="conv-count" class="muted"></span>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="ctable" id="conv-table">
+      <thead><tr>
+        <th>Channel</th><th>Contact</th><th>Start</th><th>Last message</th><th>Messages</th>
+      </tr></thead>
+      <tbody id="conv-body">
+        <tr><td colspan="5"><span class="muted">Loading…</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;gap:.4rem;margin-top:.65rem;align-items:center">
+    <button id="conv-prev" onclick="convPage(-1)" disabled>← Previous</button>
+    <span id="conv-page" class="muted"></span>
+    <button id="conv-next" onclick="convPage(1)" disabled>Next →</button>
+  </div>
+</div>
+
+<!-- ── ADMIN CHAT ── -->
+<div id="tab-chat" class="tab-content">
+  <div class="subtabs">
+    <button class="active" onclick="showSubTab('adminchat',this)">Admin chat</button>
+    <button onclick="showSubTab('testagent',this)">Test the agent</button>
+  </div>
+
+  <!-- ── Admin chat sub-tab ── -->
+  <div id="subtab-adminchat" class="subtab-content active">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem">
+      <h3 style="margin:0">Admin chat</h3>
+      <button class="outline" onclick="resetChat()">↺ New session</button>
+    </div>
+    <p class="muted" style="margin-bottom:.75rem">Ask about calls, statistics or trends. The context includes summaries of the latest calls.</p>
+    <div class="chat-wrap">
+      <div id="chat-msgs" class="chat-msgs">
+        <div class="msg msg-assistant">
+          <div class="msg-bubble">Hi! I'm the PrismVox admin assistant. I know the recent call history. How can I help?</div>
+        </div>
+      </div>
+      <div class="chat-footer">
+        <form id="chat-form" onsubmit="sendChat(event)" style="display:flex;gap:.4rem">
+          <input type="text" id="chat-input" placeholder="e.g. how many calls today?" autocomplete="off" style="flex:1;margin:0">
+          <button type="submit" id="chat-send" style="width:auto;flex-shrink:0">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Test-the-agent sub-tab ── -->
+  <div id="subtab-testagent" class="subtab-content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem">
+      <h3 style="margin:0">Test the agent</h3>
+      <button class="outline" onclick="resetAgentChat()">↺ New session</button>
+    </div>
+    <p class="muted" style="margin-bottom:.75rem">
+      Chat with the agent exactly as configured: same system prompt, directory, knowledge base (RAG) and MCP tools, with conversation memory.
+      <br><small>Telephony tools (transfer, take a message, hang up) are not available in this text channel.</small>
+    </p>
+    <div class="chat-wrap">
+      <div id="agentchat-msgs" class="chat-msgs">
+        <div class="msg msg-assistant">
+          <div class="msg-bubble">Hi! Ask me a question the way a caller would. I answer with the agent's current configuration.</div>
+        </div>
+      </div>
+      <div class="chat-footer">
+        <form id="agentchat-form" onsubmit="sendAgentChat(event)" style="display:flex;gap:.4rem">
+          <input type="text" id="agentchat-input" placeholder="e.g. what are your opening hours?" autocomplete="off" style="flex:1;margin:0">
+          <button type="submit" id="agentchat-send" style="width:auto;flex-shrink:0">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script>
+// ── Theme ─────────────────────────────────────────────────────────────────────
+function updateThemeBtn() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.getElementById('theme-icon-moon').style.display = dark ? '' : 'none';
+  document.getElementById('theme-icon-sun').style.display  = dark ? 'none' : '';
+  document.getElementById('theme-label').textContent = dark ? 'Dark theme' : 'Light theme';
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('theme', next);
+  updateThemeBtn();
+  // Re-render charts with the new palette if the dashboard is visible
+  if (document.getElementById('tab-status').classList.contains('active')) loadStatus();
+}
+function chartPalette() {
+  const css = getComputedStyle(document.documentElement);
+  const token = name => css.getPropertyValue(name).trim();
+  return { grid:token('--border'), tick:token('--muted'), text:token('--text'), accent:token('--accent'), success:token('--success'), warning:token('--warning') };
+}
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('nav.side-nav button').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  const trigger = btn || document.querySelector(`nav.side-nav button[onclick*="'${name}'"]`);
+  if (trigger) { trigger.classList.add('active'); document.getElementById('page-title').textContent = trigger.textContent.trim(); }
+  if (name === 'status')   loadStatus();
+  if (name === 'setup')    { loadSip(); loadSipStatus(); }
+  if (name === 'rag')      loadCollections();
+  if (name === 'mcp')      loadMCP();
+  if (name === 'contacts') loadContacts();
+  if (name === 'outbound') loadOutbound();
+  if (name === 'logs')     loadLogs(0);
+  if (name === 'conversations') loadConversations(0);
+  if (name === 'chat')     scrollChat();
+}
+
+function showSubTab(name, btn) {
+  const trigger = btn || event.target;
+  const parent  = trigger.closest('.tab-content');
+  parent.querySelectorAll('.subtab-content').forEach(el => el.classList.remove('active'));
+  parent.querySelectorAll('.subtabs button').forEach(el => el.classList.remove('active'));
+  document.getElementById('subtab-' + name).classList.add('active');
+  trigger.classList.add('active');
+  if (name === 'sip')       { loadSip(); loadSipStatus(); }
+  if (name === 'agentcfg')  loadConfig();
+  if (name === 'dictionary') loadDict();
+  if (name === 'adminchat') scrollChat();
+  if (name === 'testagent') scrollAgentChat();
+}
+
+// ── Dictionary ──────────────────────────────────────────────────────────────
+const DICT_FIELDS = ['whisper_hotwords','tts_spell_words','tts_spell_exceptions'];
+
+function _setDictEditing(on) {
+  DICT_FIELDS.forEach(k => document.getElementById('dict-' + k).disabled = !on);
+  document.getElementById('dict-edit-btn').style.display   = on ? 'none' : '';
+  document.getElementById('dict-save-btn').style.display   = on ? '' : 'none';
+  document.getElementById('dict-cancel-btn').style.display = on ? '' : 'none';
+}
+
+async function loadDict() {
+  try {
+    const cfg = await api('GET', '/api/config');
+    DICT_FIELDS.forEach(k => setText('dict-' + k, cfg[k] || ''));
+  } catch (e) { /* ignore */ }
+  _setDictEditing(false);
+}
+
+function toggleDictEdit() { _setDictEditing(true); }
+
+async function saveDict(e) {
+  e.preventDefault();
+  const values = {};
+  DICT_FIELDS.forEach(k => values[k] = get('dict-' + k).trim());
+  await api('PUT', '/api/config', { values });
+  const s = document.getElementById('dict-status');
+  s.style.display = ''; setTimeout(() => s.style.display = 'none', 2500);
+  _setDictEditing(false);
+}
+
+// ── SIP / Telephony ────────────────────────────────────────────────────────────
+const SIP_FIELDS = ['sip_registrar','sip_registrar_ip','sip_registrar_match',
+                    'sip_username','sip_password','sip_tls_port','sip_udp_port',
+                    'sip_domain','sip_callerid_name','sip_transfer_method',
+                    'sip_transport_mode'];
+
+// Only the port field for the selected transport is relevant — hide the other.
+function onSipTransportModeChange() {
+  const udp = get('sip-sip_transport_mode') === 'udp';
+  document.getElementById('sip-tls-port-label').style.display = udp ? 'none' : '';
+  document.getElementById('sip-udp-port-label').style.display = udp ? '' : 'none';
+}
+
+async function loadSip() {
+  try {
+    const cfg = await api('GET', '/api/sip');
+    SIP_FIELDS.forEach(k => setText('sip-' + k, cfg[k] || ''));
+    onSipTransportModeChange();
+    hide('sip-status');
+  } catch(e) {
+    sipStatus('Loading failed: ' + e.message, false);
+  }
+}
+
+function _sipBody() {
+  const b = {};
+  SIP_FIELDS.forEach(k => b[k] = get('sip-' + k).trim());
+  return b;
+}
+
+function sipStatus(msg, ok = true) {
+  const el = document.getElementById('sip-status');
+  el.textContent = msg;
+  el.style.color = ok ? 'var(--success)' : 'var(--danger)';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+async function saveSip(e) {
+  if (e) e.preventDefault();
+  try {
+    await api('PUT', '/api/sip', _sipBody());
+    sipStatus('✓ Saved (not applied yet — click "Apply")');
+    return true;
+  } catch(err) {
+    sipStatus('Error: ' + err.message, false);
+    return false;
+  }
+}
+
+async function applySip() {
+  const btn = document.getElementById('sip-apply-btn');
+  btn.disabled = true; const label = btn.textContent; btn.textContent = 'Applying…';
+  try {
+    if (!(await saveSip())) return;            // persist first
+    const res = await api('POST', '/api/sip/apply');
+    if (res.ok) sipStatus('✓ Applied — ' + res.detail);
+    else        sipStatus('⚠ Config written but reload failed: ' + res.detail, false);
+    loadSipStatus();
+  } catch(err) {
+    sipStatus('Failed: ' + err.message, false);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+async function loadSipStatus() {
+  const el = document.getElementById('sip-endpoint-state');
+  if (!el) return;
+  el.className = 'badge badge-loading'; el.textContent = '…';
+  try {
+    const s = await api('GET', '/api/sip/status');
+    const st = s.endpoint_state || 'unknown';
+    const ok = st === 'online';
+    el.className = 'badge badge-' + (ok ? 'ok' : (st === 'offline' ? 'error' : 'loading'));
+    el.textContent = st;
+  } catch(e) {
+    el.className = 'badge badge-error'; el.textContent = 'unavailable';
+  }
+}
+
+// ── Status dashboard ──────────────────────────────────────────────────────────
+const _charts = {};
+function _mkChart(id, cfg) {
+  if (_charts[id]) _charts[id].destroy();
+  const el = document.getElementById(id);
+  if (!el) return;
+  _charts[id] = new Chart(el, cfg);
+}
+function fmtUp(s) {
+  const d=Math.floor(s/86400), h=Math.floor((s%86400)/3600), m=Math.floor((s%3600)/60);
+  if(d>0) return `${d}d ${h}h`; if(h>0) return `${h}h ${m}m`; return `${m}m ${s%60}s`;
+}
+function fmtDur(s) {
+  if(!s) return '—'; const m=Math.floor(s/60),sec=s%60;
+  return m>0 ? `${m}m${String(sec).padStart(2,'0')}` : `${s}s`;
+}
+
+async function loadStatus() {
+  ['db','tts','stt','llm','sip','agent'].forEach(k => {
+    const el = document.getElementById('health-'+k);
+    if(el){ el.className='badge badge-loading'; el.textContent='…'; }
+  });
+
+  // Service health
+  try {
+    const h = await api('GET', '/api/health');
+    for(const [k,v] of Object.entries(h)){
+      if(k === 'model'){
+        const sub = document.getElementById('app-subtitle');
+        if(sub) sub.textContent = `Voice & telephony · ${v}`;
+        continue;
+      }
+      const el = document.getElementById('health-'+k);
+      if(!el) continue;
+      el.className = 'badge badge-'+(v==='ok'?'ok':v==='configured'?'loading':'error');
+      el.title = v==='configured'?'Provider configured; use Connect to verify access.':'';
+      el.textContent = v;
+    }
+  } catch(e){ console.error('health:',e); }
+
+  // Runtime
+  try {
+    const d = await api('GET', '/api/runtime-status');
+
+    // SIP badge
+    const sipEl = document.getElementById('health-sip');
+    if(sipEl){
+      sipEl.className = 'badge badge-'+(d.sip_ok?'ok':'error');
+      sipEl.textContent = d.sip_ok ? 'registered' : 'offline';
+    }
+
+    // Agent badge
+    const agEl = document.getElementById('health-agent');
+    if(agEl){
+      const busy = d.active_calls > 0;
+      agEl.className = 'badge '+(busy?'badge-warn':'badge-ok');
+      agEl.innerHTML = `<span class="pulse ${busy?'pulse-warn':'pulse-ok'}"></span>${busy?`on a call (${d.active_calls})`:'available'}`;
+    }
+
+    // Stat cards
+    document.getElementById('rt-uptime').textContent = fmtUp(d.uptime_secs);
+    document.getElementById('rt-today').textContent  = d.calls_today;
+    document.getElementById('rt-since-sub').textContent = `${d.calls_since_start} since startup`;
+    document.getElementById('rt-total').textContent  = d.total_calls;
+    document.getElementById('rt-avg').textContent    = fmtDur(d.avg_duration_secs);
+    document.getElementById('rt-xfer').textContent   = d.transfer_pct+'%';
+
+    const G = chartPalette();
+
+    // Chart — calls per day
+    const cpd = d.calls_per_day||[];
+    _mkChart('chart-days',{
+      type:'bar',
+      data:{ labels:cpd.map(r=>r.day), datasets:[{
+        data:cpd.map(r=>r.count), backgroundColor:G.accent+'66',
+        borderColor:G.accent, borderWidth:1, borderRadius:3,
+      }]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{color:G.grid}, ticks:{color:G.tick,font:{size:11}}},
+          y:{grid:{color:G.grid}, ticks:{color:G.tick,font:{size:11},stepSize:1}, beginAtZero:true},
+        }
+      }
+    });
+
+    // Chart — donut end reasons
+    const RL = {hung_up:'Hung up (caller)', agent_hung_up:'Hung up (agent)', transferred:'Transferred', in_progress:'In progress'};
+    const RC = {hung_up:G.tick, agent_hung_up:G.warning, transferred:G.accent, in_progress:G.success};
+    const er = d.end_reasons||[];
+    _mkChart('chart-reasons',{
+      type:'doughnut',
+      data:{ labels:er.map(r=>RL[r.reason]||r.reason), datasets:[{
+        data:er.map(r=>r.count),
+        backgroundColor:er.map(r=>(RC[r.reason]||'#888888')+'bb'),
+        borderColor:er.map(r=>RC[r.reason]||'#888888'), borderWidth:1,
+      }]},
+      options:{ responsive:true, maintainAspectRatio:false, cutout:'62%',
+        plugins:{ legend:{ position:'bottom', labels:{ color:G.text, font:{size:11}, padding:8 } } }
+      }
+    });
+
+    // Chart — top callers horizontal bar
+    const cl = d.top_callers||[];
+    _mkChart('chart-callers',{
+      type:'bar',
+      data:{ labels:cl.map(c=>c.number), datasets:[{
+        data:cl.map(c=>c.count), backgroundColor:G.success+'55',
+        borderColor:G.success, borderWidth:1, borderRadius:3,
+      }]},
+      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{color:G.grid}, ticks:{color:G.tick,font:{size:11},stepSize:1}, beginAtZero:true},
+          y:{grid:{color:'transparent'}, ticks:{color:G.text,font:{size:11}}},
+        }
+      }
+    });
+
+  } catch(e){ console.error('runtime-status:',e); }
+}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+async function loadConfig() {
+  const cfg = await api('GET', '/api/config');
+  setText('cfg-system_prompt',    cfg.system_prompt || '');
+  setText('cfg-greeting',         cfg.greeting || '');
+  setText('cfg-outbound_system_prompt', cfg.outbound_system_prompt || '');
+  setText('cfg-llm_model_standard', cfg.llm_model_standard || '');
+  setText('cfg-llm_url_standard', cfg.llm_url_standard || '');
+  setText('cfg-llm_url_oncall', cfg.llm_url_oncall || '');
+  setText('cfg-llm_model_oncall', cfg.llm_model_oncall || '');
+  setText('cfg-transfer_dialog_turns', cfg.transfer_dialog_turns || '');
+  setText('cfg-admin_chat_prompt', cfg.admin_chat_prompt || '');
+  PHRASE_KEYS.forEach(k => setText('cfg-' + k, cfg[k] || ''));
+  setCheck('cfg-rag_enabled',  cfg.rag_enabled === 'true');
+  setCheck('cfg-mcp_enabled',  cfg.mcp_enabled === 'true');
+  hide('agent-status');
+  loadTTSVoices();
+}
+
+window.addEventListener('message',event=>{
+ const frame=document.getElementById('speech-providers');
+ if(event.origin!==location.origin||event.source!==frame?.contentWindow)return;
+ if(event.data?.type==='prismvox-voice-height')frame.style.height=Math.min(900,Math.max(160,event.data.height))+'px';
+ if(event.data?.type==='prismvox-voice-saved')loadTTSVoices();
+});
+// ── TTS voice ─────────────────────────────────────────────────────────────────
+async function loadTTSVoices() {
+  const sel = document.getElementById('tts-voice-select');
+  try {
+    const data = await api('GET', '/api/tts/voices');
+    sel.innerHTML = data.voices.map(v =>
+      `<option value="${esc(v)}" ${v===data.current?'selected':''}>${esc(v.replace(/\.[^.]+$/,''))}</option>`
+    ).join('');
+  } catch(e) {
+    sel.innerHTML = '<option>unavailable</option>';
+  }
+}
+
+function ttsVoiceStatus(msg, ok = true) {
+  const el = document.getElementById('tts-voice-status');
+  el.textContent = msg;
+  el.style.color = ok ? 'var(--success)' : 'var(--danger)';
+  if (msg) setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+async function setTTSVoice(name) {
+  try {
+    await api('PUT', '/api/tts/voice', { name });
+    ttsVoiceStatus('✓ Voice activated');
+  } catch(e) {
+    ttsVoiceStatus('Error: ' + e.message, false);
+  }
+}
+
+let _previewAudio = null;
+async function previewTTSVoice() {
+  const btn = document.getElementById('tts-preview-btn');
+  btn.disabled = true; btn.textContent = '⏳ Synthesizing…';
+  try {
+    const resp = await fetch('/api/tts/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: "Hello, thank you for calling. How can I help you today?" }),
+    });
+    if (!resp.ok) throw new Error(resp.statusText);
+    const blob = await resp.blob();
+    if (_previewAudio) _previewAudio.pause();
+    _previewAudio = new Audio(URL.createObjectURL(blob));
+    _previewAudio.play();
+  } catch(e) {
+    ttsVoiceStatus('Preview failed: ' + e.message, false);
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Preview';
+  }
+}
+
+// ── Voice recording (mic → voice clone) ───────────────────────────────────────
+let _mediaRecorder = null, _recChunks = [], _recBlob = null, _recStream = null, _recFileName = null;
+// The UI also serves HTTPS on this port (self-signed cert) — see docker-entrypoint.sh.
+const UI_HTTPS_PORT = 7861;
+
+async function toggleRecord() {
+  const btn = document.getElementById('rec-btn');
+  if (_mediaRecorder && _mediaRecorder.state === 'recording') {
+    _mediaRecorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    const hint = document.getElementById('mic-insecure-hint');
+    if (location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      const httpsUrl = `https://${location.hostname}:${UI_HTTPS_PORT}${location.pathname}${location.search}`;
+      hint.innerHTML = `Microphone unavailable over http on this address. Open <a href="${httpsUrl}">${httpsUrl}</a> (the browser will warn about the self-signed certificate — that's expected, accept it once).`;
+    } else {
+      hint.textContent = 'Microphone unavailable (https or localhost required).';
+    }
+    hint.style.display = '';
+    ttsVoiceStatus('Microphone unavailable (https or localhost required)', false);
+    return;
+  }
+  document.getElementById('mic-insecure-hint').style.display = 'none';
+  try {
+    _recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    ttsVoiceStatus('Micro inaccessible : ' + e.message, false);
+    return;
+  }
+  _recChunks = [];
+  _mediaRecorder = new MediaRecorder(_recStream);
+  _mediaRecorder.ondataavailable = e => { if (e.data.size) _recChunks.push(e.data); };
+  _mediaRecorder.onstop = () => {
+    _recStream.getTracks().forEach(t => t.stop());
+    _recFileName = null; // this is a mic recording, not the uploaded-file path
+    _recBlob = new Blob(_recChunks, { type: _recChunks[0]?.type || 'audio/webm' });
+    const a = document.getElementById('rec-preview');
+    a.src = URL.createObjectURL(_recBlob);
+    a.style.display = '';
+    document.getElementById('rec-add').disabled = false;
+    btn.textContent = '🎙 Re-record';
+    btn.classList.remove('rec-active');
+    ttsVoiceStatus('');
+  };
+  _mediaRecorder.start();
+  btn.textContent = '⏹ Stop';
+  btn.classList.add('rec-active');
+  document.getElementById('rec-add').disabled = true;
+  ttsVoiceStatus('Recording…');
+}
+
+// Uploading a file needs no microphone/secure-context at all — the file
+// picker always works, so this is the fallback when recording isn't
+// available (plain http on a non-localhost address).
+function onVoiceFileSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  _recBlob = file;
+  _recFileName = file.name;
+  const a = document.getElementById('rec-preview');
+  a.src = URL.createObjectURL(file);
+  a.style.display = '';
+  document.getElementById('rec-add').disabled = false;
+  document.getElementById('mic-insecure-hint').style.display = 'none';
+  if (!document.getElementById('rec-name').value.trim()) {
+    document.getElementById('rec-name').value = file.name.replace(/\.[^.]+$/, '');
+  }
+}
+
+async function addRecordedVoice() {
+  if (!_recBlob) { ttsVoiceStatus('Record or upload a file first', false); return; }
+  const name = document.getElementById('rec-name').value.trim();
+  if (!name) { ttsVoiceStatus('Give the voice a name', false); return; }
+  const ext = _recFileName ? _recFileName.split('.').pop() : (_recBlob.type.includes('ogg') ? 'ogg' : 'webm');
+  const fd = new FormData();
+  fd.append('file', _recBlob, 'rec.' + ext);
+  fd.append('name', name);
+  const btn = document.getElementById('rec-add');
+  btn.disabled = true; btn.textContent = '⏳ Adding…';
+  try {
+    const resp = await fetch('/api/tts/voices', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    document.getElementById('rec-name').value = '';
+    document.getElementById('rec-preview').style.display = 'none';
+    document.getElementById('rec-file').value = '';
+    _recBlob = null;
+    _recFileName = null;
+    await loadTTSVoices();
+    ttsVoiceStatus(`✓ ${data.name} added`);
+  } catch(e) {
+    ttsVoiceStatus('Add failed: ' + e.message, false);
+  } finally {
+    btn.disabled = false; btn.textContent = '⬆ Add this voice';
+  }
+}
+
+const PHRASE_KEYS = ['phrase_farewell','phrase_still_there','phrase_unknown_contact',
+  'phrase_transfer_now','phrase_hold','phrase_ask_name','phrase_ask_reason','phrase_connecting',
+  'phrase_announce'];
+
+async function saveConfig(e) {
+  e.preventDefault();
+  const values = {
+    system_prompt:    get('cfg-system_prompt'),
+    greeting:         get('cfg-greeting'),
+    outbound_system_prompt: get('cfg-outbound_system_prompt'),
+    llm_model_standard: get('cfg-llm_model_standard'),
+    llm_url_standard: get('cfg-llm_url_standard'),
+    llm_url_oncall: get('cfg-llm_url_oncall'),
+    llm_model_oncall: get('cfg-llm_model_oncall'),
+    transfer_dialog_turns: get('cfg-transfer_dialog_turns'),
+    admin_chat_prompt: get('cfg-admin_chat_prompt'),
+    rag_enabled:      String(getCheck('cfg-rag_enabled')),
+    mcp_enabled:      String(getCheck('cfg-mcp_enabled')),
+  };
+  PHRASE_KEYS.forEach(k => values[k] = get('cfg-' + k));
+  await api('PUT', '/api/config', { values });
+  show('agent-status');
+  setTimeout(() => hide('agent-status'), 2500);
+}
+
+// ── RAG Collections ───────────────────────────────────────────────────────────
+async function embedAll() {
+  const btn = document.getElementById('embed-all-btn');
+  const status = document.getElementById('embed-all-status');
+  btn.disabled = true; status.textContent = 'Indexing…';
+  try {
+    const r = await api('POST', '/api/rag/embed-all');
+    status.textContent = `✓ ${r.embedded} passage(s) (re)indexed.`;
+  } catch (e) {
+    status.textContent = '✗ failed — is the embeddings service responding?';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => status.textContent = '', 5000);
+  }
+}
+
+async function loadCollections() {
+  const cols = await api('GET', '/api/rag/collections');
+  const el = document.getElementById('collections-list');
+  if (!cols.length) { el.innerHTML = '<p class="muted">No collections.</p>'; return; }
+  el.innerHTML = cols.map(c => `
+    <details id="col-${c.id}">
+      <summary style="display:flex;align-items:center;gap:.5rem">
+        <span class="flex-1">
+          <strong style="font-size:.82rem">${esc(c.name)}</strong>
+          <span class="muted"> — ${c.chunk_count} chunk${c.chunk_count!==1?'s':''}</span>
+          ${c.description ? `<span class="muted"> · ${esc(c.description)}</span>` : ''}
+        </span>
+        <span style="display:inline-flex;gap:.3rem;align-items:center">
+          <label style="margin:0"><input type="checkbox" role="switch" ${c.enabled?'checked':''} style="margin:0" onchange="toggleCollection(${c.id},this.checked)"></label>
+          <button class="outline contrast" style="padding:.12rem .38rem;font-size:.7rem" onclick="event.stopPropagation();deleteCollection(${c.id})">✕</button>
+        </span>
+      </summary>
+      <div style="padding:.4rem 0">
+        <form onsubmit="uploadDoc(event,${c.id})" enctype="multipart/form-data" style="display:flex;gap:.4rem;align-items:flex-end;margin-bottom:.6rem">
+          <label style="flex:1;margin:0"><input type="file" name="file" accept=".txt,.md,.pdf" required style="margin:0"></label>
+          <button type="submit" style="flex:0">Upload</button>
+        </form>
+        <div id="chunks-${c.id}" class="chunk-list"><em class="muted">Click to load chunks…</em></div>
+        <button class="outline" style="margin-top:.35rem" onclick="loadChunks(${c.id})">↻ Load</button>
+      </div>
+    </details>
+  `).join('');
+}
+
+async function loadChunks(colId) {
+  const el = document.getElementById('chunks-' + colId);
+  el.innerHTML = '<em class="muted">Loading…</em>';
+  const chunks = await api('GET', `/api/rag/collections/${colId}/chunks`);
+  if (!chunks.length) { el.innerHTML = '<em class="muted">No chunks.</em>'; return; }
+  el.innerHTML = chunks.map(ch => `
+    <div class="chunk-item">
+      <div class="chunk-text">${esc(ch.content)}</div>
+      <button class="outline contrast" style="padding:.08rem .32rem;font-size:.68rem;flex:0" onclick="deleteChunk(${ch.id},${colId})">✕</button>
+    </div>
+  `).join('');
+}
+
+async function createCollection(e) {
+  e.preventDefault();
+  const name = get('new-col-name'), desc = get('new-col-desc');
+  if (!name) return;
+  await api('POST', '/api/rag/collections', { name, description: desc });
+  document.getElementById('new-collection-form').reset();
+  loadCollections();
+}
+async function toggleCollection(id, enabled) { await api('PATCH', `/api/rag/collections/${id}?enabled=${enabled}`); }
+async function deleteCollection(id) {
+  if (!confirm('Delete this collection and all its chunks?')) return;
+  await api('DELETE', `/api/rag/collections/${id}`); loadCollections();
+}
+async function uploadDoc(e, colId) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const resp = await fetch(`/api/rag/collections/${colId}/upload`, { method:'POST', body:fd });
+  const data = await resp.json();
+  if (!resp.ok) { alert(data.detail || 'Upload failed'); return; }
+  alert(`${data.chunks_added} chunks added from "${data.source}"`);
+  form.reset(); loadChunks(colId); loadCollections();
+}
+async function deleteChunk(chunkId, colId) {
+  await api('DELETE', `/api/rag/chunks/${chunkId}`); loadChunks(colId); loadCollections();
+}
+
+// ── MCP Servers ───────────────────────────────────────────────────────────────
+async function loadMCP() {
+  const servers = await api('GET', '/api/mcp');
+  const el = document.getElementById('mcp-list');
+  if (!servers.length) { el.innerHTML = '<p class="muted">No MCP servers.</p>'; return; }
+  el.innerHTML = servers.map(s => `
+    <details id="mcp-${s.id}">
+      <summary style="display:flex;align-items:center;gap:.5rem;list-style:none;cursor:pointer" onclick="mcpToggleDetails(event,${s.id})">
+        <span class="flex-1">
+          <strong style="font-size:.82rem">${esc(s.name)}</strong>
+          <span class="muted"> [${s.type}]</span><br>
+          <span class="muted" style="font-size:.72rem">${s.type==='stdio' ? esc(JSON.stringify(s.command)) : esc(s.url||'')}</span>
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:.3rem">
+          ${s.type!=='stdio' ? `<button class="outline" style="padding:.12rem .42rem;font-size:.7rem" onclick="event.stopPropagation();probeMCP(${s.id})">⟳ Probe</button>` : ''}
+          <label style="margin:0"><input type="checkbox" role="switch" ${s.enabled?'checked':''} style="margin:0" onchange="toggleMCP(${s.id},this.checked)"></label>
+          <button class="outline contrast" style="padding:.12rem .38rem;font-size:.7rem" onclick="event.stopPropagation();deleteMCP(${s.id})">✕</button>
+        </span>
+      </summary>
+      <div style="padding:.35rem 0 .2rem .5rem" id="mcp-tools-${s.id}">
+        <em class="muted">Click to load tools…</em>
+      </div>
+    </details>
+  `).join('');
+}
+
+async function mcpToggleDetails(event, serverId) {
+  const details = document.getElementById('mcp-' + serverId);
+  if (!details.open) await loadMCPTools(serverId);
+}
+async function loadMCPTools(serverId) {
+  const el = document.getElementById('mcp-tools-' + serverId);
+  el.innerHTML = '<em class="muted">Loading…</em>';
+  try {
+    const tools = await api('GET', `/api/mcp/${serverId}/tools`);
+    if (!tools.length) { el.innerHTML = '<em class="muted">No tools. Click ⟳ Probe for an HTTP/SSE server. Stdio transport is not supported.</em>'; return; }
+    el.innerHTML = '<div style="margin-top:.2rem">' + tools.map(t => `
+      <div class="tool-row">
+        <label style="margin:0;display:inline-flex;align-items:center;gap:.3rem">
+          <input type="checkbox" role="switch" ${t.enabled?'checked':''} style="margin:0;width:1.8rem" data-mcp-server="${serverId}" data-mcp-tool="${esc(t.name)}">
+        </label>
+        <span class="tool-name">${esc(t.name)}</span>
+        ${t.description ? `<span class="tool-desc">${esc(t.description)}</span>` : ''}
+      </div>
+    `).join('') + '</div>';
+  } catch(e) { el.innerHTML = `<em class="muted" style="color:var(--danger)">Error: ${esc(e.message)}</em>`; }
+}
+async function probeMCP(serverId) {
+  const el = document.getElementById('mcp-tools-' + serverId);
+  el.innerHTML = '<em class="muted">Connecting…</em>';
+  document.getElementById('mcp-' + serverId).open = true;
+  try { await api('POST', `/api/mcp/${serverId}/probe`); await loadMCPTools(serverId); }
+  catch(e) { el.innerHTML = `<em class="muted" style="color:var(--danger)">Probe failed: ${esc(e.message)}</em>`; }
+}
+async function createMCP(e) {
+  e.preventDefault();
+  const type = get('mcp-type'), name = get('mcp-name');
+  const cmdRaw = get('mcp-command').trim(), url = get('mcp-url').trim(), authToken = get('mcp-auth-token').trim();
+  let command = [];
+  if (type === 'stdio') {
+    try { command = JSON.parse(cmdRaw); } catch { alert('The command must be a valid JSON array'); return; }
+  }
+  await api('POST', '/api/mcp', { name, type, command, url, auth_token: authToken });
+  document.getElementById('new-mcp-form').reset(); mcpTypeChanged(); loadMCP();
+}
+async function toggleMCP(id, enabled)  { await api('PATCH', `/api/mcp/${id}?enabled=${enabled}`); }
+async function toggleMCPTool(serverId, toolName, enabled) { await api('PATCH', `/api/mcp/${serverId}/tools/${encodeURIComponent(toolName)}?enabled=${enabled}`); }
+async function deleteMCP(id) {
+  if (!confirm('Delete this MCP server?')) return;
+  await api('DELETE', `/api/mcp/${id}`); loadMCP();
+}
+function mcpTypeChanged() {
+  const type = get('mcp-type');
+  document.getElementById('mcp-stdio-fields').style.display = type==='stdio' ? '' : 'none';
+  document.getElementById('mcp-http-fields').style.display  = type!=='stdio' ? '' : 'none';
+}
+
+// ── Directory ──────────────────────────────────────────────────────────────────
+async function loadContacts() {
+  const contacts = await api('GET', '/api/contacts');
+  const el = document.getElementById('contacts-list');
+  if (!contacts.length) { el.innerHTML = '<p class="muted">No contacts.</p>'; return; }
+  el.innerHTML = `
+    <table class="ctable">
+      <thead><tr><th>Name</th><th>Number</th><th>Notes</th><th>Transfer</th><th></th></tr></thead>
+      <tbody>
+        ${contacts.map(c => `
+          <tr id="contact-row-${c.id}">
+            <td>
+              <span id="cname-${c.id}">${esc(c.name)}</span>
+              <input id="cname-edit-${c.id}" type="text" value="${esc(c.name)}" style="display:none;margin:0;padding:.18rem .35rem">
+            </td>
+            <td class="mono">
+              <span id="cphone-${c.id}">${esc(c.phone_number)}</span>
+              <input id="cphone-edit-${c.id}" type="text" value="${esc(c.phone_number)}" style="display:none;margin:0;padding:.18rem .35rem">
+            </td>
+            <td style="color:var(--muted)">
+              <span id="cnotes-${c.id}">${esc(c.notes||'')}</span>
+              <input id="cnotes-edit-${c.id}" type="text" value="${esc(c.notes||'')}" style="display:none;margin:0;padding:.18rem .35rem">
+            </td>
+            <td>
+              <span id="cttype-${c.id}">
+                <span class="chip ${c.transfer_type==='attended'?'chip-attended':'chip-blind'}"
+                  style="cursor:pointer;user-select:none"
+                  title="Click to change the transfer type"
+                  onclick="toggleTransferType(${c.id},'${c.transfer_type}')">
+                  ${c.transfer_type==='attended'?'attended':'blind'}
+                </span>
+              </span>
+              <select id="cttype-edit-${c.id}" style="display:none;margin:0;padding:.18rem .3rem;font-size:.75rem">
+                <option value="blind" ${c.transfer_type==='blind'?'selected':''}>blind</option>
+                <option value="attended" ${c.transfer_type==='attended'?'selected':''}>attended</option>
+              </select>
+            </td>
+            <td style="white-space:nowrap">
+              <span id="cview-${c.id}" style="display:inline-flex;gap:.25rem;align-items:center">
+                <label style="margin:0"><input type="checkbox" role="switch" ${c.enabled?'checked':''} style="margin:0" onchange="toggleContact(${c.id},this.checked)"></label>
+                <button class="outline" style="padding:.1rem .35rem;font-size:.7rem" onclick="contactEditStart(${c.id})">✎</button>
+                <button class="outline contrast" style="padding:.1rem .35rem;font-size:.7rem" onclick="deleteContact(${c.id})">✕</button>
+              </span>
+              <span id="cedit-${c.id}" style="display:none;gap:.25rem">
+                <button style="padding:.1rem .35rem;font-size:.7rem" onclick="contactEditSave(${c.id})">✓</button>
+                <button class="outline" style="padding:.1rem .35rem;font-size:.7rem" onclick="contactEditCancel(${c.id})">✕</button>
+              </span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`;
+}
+async function createContact(e) {
+  e.preventDefault();
+  const name = get('contact-name').trim(), phone = get('contact-phone').trim();
+  const notes = get('contact-notes').trim();
+  const transfer_type = get('contact-ttype') || 'blind';
+  if (!name || !phone) return;
+  await api('POST', '/api/contacts', { name, phone_number: phone, notes, transfer_type });
+  document.getElementById('new-contact-form').reset();
+  document.getElementById('new-contact-details').open = false;
+  loadContacts();
+}
+async function toggleContact(id, enabled) { await api('PATCH', `/api/contacts/${id}?enabled=${enabled}`); }
+async function toggleTransferType(id, current) {
+  const next = current === 'attended' ? 'blind' : 'attended';
+  await api('PATCH', `/api/contacts/${id}/transfer_type?transfer_type=${next}`);
+  loadContacts();
+}
+async function deleteContact(id) {
+  if (!confirm('Delete this contact?')) return;
+  await api('DELETE', `/api/contacts/${id}`); loadContacts();
+}
+function contactEditStart(id) {
+  ['cname','cphone','cnotes'].forEach(f => {
+    document.getElementById(f+'-'+id).style.display = 'none';
+    document.getElementById(f+'-edit-'+id).style.display = '';
+  });
+  document.getElementById('cttype-'+id).style.display = 'none';
+  document.getElementById('cttype-edit-'+id).style.display = '';
+  document.getElementById('cview-'+id).style.display = 'none';
+  document.getElementById('cedit-'+id).style.display = 'inline-flex';
+}
+function contactEditCancel(id) {
+  ['cname','cphone','cnotes'].forEach(f => {
+    document.getElementById(f+'-edit-'+id).style.display = 'none';
+    document.getElementById(f+'-'+id).style.display = '';
+  });
+  document.getElementById('cttype-edit-'+id).style.display = 'none';
+  document.getElementById('cttype-'+id).style.display = '';
+  document.getElementById('cview-'+id).style.display = 'inline-flex';
+  document.getElementById('cedit-'+id).style.display = 'none';
+}
+async function contactEditSave(id) {
+  const name = document.getElementById('cname-edit-'+id).value.trim();
+  const phone = document.getElementById('cphone-edit-'+id).value.trim();
+  const notes = document.getElementById('cnotes-edit-'+id).value.trim();
+  const transfer_type = document.getElementById('cttype-edit-'+id).value;
+  if (!name || !phone) return;
+  await api('PUT', `/api/contacts/${id}`, { name, phone_number: phone, notes, transfer_type });
+  loadContacts();
+}
+
+// ── Outbound calls ────────────────────────────────────────────────────────────
+const CALL_STATUS = {
+  pending:   { label: 'Pending',     color: 'var(--accent)' },
+  calling:   { label: 'Calling',     color: 'var(--warning)' },
+  done:      { label: 'Call completed', color: 'var(--success)', hint: 'The call ended. Read its summary to check whether the mission was accomplished.' },
+  no_answer: { label: 'No answer',   color: 'var(--warning)' },
+  failed:    { label: 'Failed',      color: 'var(--danger, #e05252)' },
+  cancelled: { label: 'Cancelled',   color: 'var(--muted)' },
+};
+
+async function loadOutbound() {
+  const tbody = document.getElementById('calls-body');
+  try {
+    const data = await api('GET', '/api/calls?limit=100');
+    document.getElementById('calls-count').textContent =
+      `${data.total} call${data.total!==1?'s':''} — ${data.items.filter(t=>t.status==='pending').length} pending`;
+    tbody.innerHTML = data.items.length
+      ? data.items.map(buildCallRow).join('')
+      : '<tr><td colspan="8"><span class="muted">No scheduled calls.</span></td></tr>';
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function buildCallRow(t) {
+  const st = CALL_STATUS[t.status] || { label: t.status, color: 'var(--muted)' };
+  const when = t.scheduled_at
+    ? new Date(t.scheduled_at).toLocaleString('en', { dateStyle:'short', timeStyle:'short' })
+    : '—';
+  const mission = esc(t.mission.length > 90 ? t.mission.slice(0, 90) + '…' : t.mission);
+  let actions = '';
+  if (t.status === 'pending')
+    actions = `<button class="outline contrast" style="padding:.1rem .35rem;font-size:.7rem" title="Cancel" onclick="cancelOutbound(${t.id})">✕</button>`;
+  else if (t.status !== 'calling')
+    actions = `<button class="outline" style="padding:.1rem .35rem;font-size:.7rem" title="Redial now" onclick="retryOutbound(${t.id})">↺</button>`;
+  return `
+    <tr>
+      <td><span class="chip" title="${esc(st.hint || st.label)}" style="border-color:${st.color};color:${st.color}">${st.label}</span></td>
+      <td class="mono">${esc(t.phone_number)}</td>
+      <td>${t.contact_name ? esc(t.contact_name) : '<span class="muted">—</span>'}</td>
+      <td title="${esc(t.mission)}">${mission}</td>
+      <td>${when}</td>
+      <td>${t.attempts}/${t.max_attempts}</td>
+      <td style="color:var(--muted)">${t.result_summary ? esc(t.result_summary) : '—'}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+}
+
+async function createOutboundCall(e) {
+  e.preventDefault();
+  const phone = get('call-phone').trim(), mission = get('call-mission').trim();
+  if (!phone || !mission) return;
+  const body = {
+    phone_number: phone,
+    mission,
+    contact_name: get('call-contact').trim(),
+    max_attempts: parseInt(get('call-attempts'), 10),
+  };
+  const when = get('call-when');
+  if (when) body.scheduled_at = new Date(when).toISOString();
+  await api('POST', '/api/calls', body);
+  document.getElementById('new-call-form').reset();
+  document.getElementById('new-call-details').open = false;
+  loadOutbound();
+}
+
+async function cancelOutbound(id) {
+  if (!confirm('Cancel this scheduled call?')) return;
+  await api('DELETE', `/api/calls/${id}`); loadOutbound();
+}
+
+async function retryOutbound(id) {
+  if (!confirm('Redial this call now?')) return;
+  await api('POST', `/api/calls/${id}/retry`); loadOutbound();
+}
+
+// Auto-refresh while the outbound tab is visible (a call may be in progress)
+setInterval(() => {
+  const tab = document.getElementById('tab-outbound');
+  if (tab && tab.classList.contains('active')) loadOutbound();
+}, 10000);
+
+// ── Call Logs ─────────────────────────────────────────────────────────────────
+const LOGS_PER_PAGE = 25;
+let _logsOffset = 0, _logsTotal = 0;
+
+async function loadLogs(offset = 0) {
+  _logsOffset = offset;
+  const tbody = document.getElementById('logs-body');
+  tbody.innerHTML = '<tr><td colspan="4"><span class="muted">Loading…</span></td></tr>';
+  try {
+    const data = await api('GET', `/api/call-logs?limit=${LOGS_PER_PAGE}&offset=${offset}`);
+    _logsTotal = data.total;
+    document.getElementById('logs-count').textContent = `${data.total} call${data.total!==1?'s':''} in total`;
+    tbody.innerHTML = data.items.length
+      ? data.items.map(row => buildLogRows(row)).join('')
+      : '<tr><td colspan="5"><span class="muted">No calls recorded.</span></td></tr>';
+    const page = Math.floor(offset / LOGS_PER_PAGE) + 1;
+    const maxPage = Math.max(1, Math.ceil(_logsTotal / LOGS_PER_PAGE));
+    document.getElementById('logs-page').textContent = `Page ${page} / ${maxPage}`;
+    document.getElementById('logs-prev').disabled = offset <= 0;
+    document.getElementById('logs-next').disabled = offset + LOGS_PER_PAGE >= _logsTotal;
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function directionBadge(dir) {
+  const out = dir === 'outbound';
+  const color = out ? 'var(--accent)' : 'var(--success)';
+  const arrow = out ? '↗' : '↙';
+  const label = out ? 'Outbound' : 'Inbound';
+  return `<span class="chip" style="border-color:${color};color:${color}" title="${label} call">${arrow} ${label}</span>`;
+}
+
+function buildLogRows(row) {
+  const caller   = row.caller_number ? esc(row.caller_number) : '<span class="muted">unknown</span>';
+  const started  = new Date(row.started_at).toLocaleString('en', { dateStyle:'short', timeStyle:'medium' });
+  const duration = row.ended_at ? fmtDuration(row.duration_secs) : '<span class="muted">in progress</span>';
+  const tools    = Array.isArray(row.tools_used) ? row.tools_used : [];
+  const ragUsed  = row.rag_used === true;
+  const summary  = row.summary || '';
+  const message  = row.message || '';
+  const turns    = Array.isArray(row.turns) ? row.turns : [];
+  const hasDetail = tools.length > 0 || ragUsed || summary || message || turns.length > 0;
+
+  const mainRow = `
+    <tr id="log-row-${row.id}" class="log-row" onclick="${hasDetail?`toggleLog(${row.id})`:''}">
+      <td>${directionBadge(row.direction)}</td>
+      <td class="mono">${caller}</td>
+      <td style="white-space:nowrap;color:var(--muted)">${started}</td>
+      <td style="white-space:nowrap">${duration}</td>
+      <td><div class="log-reason-cell">${reasonBadge(row.end_reason)}${hasDetail?'<span class="expand-btn">▶</span>':''}</div></td>
+    </tr>`;
+
+  if (!hasDetail) return mainRow;
+
+  const toolChips = tools.map(t => {
+    let label = esc(t.tool || '?');
+    if (t.tool === 'transfer_call' && t.args?.destination) label += ` → ${esc(t.args.destination)}`;
+    else if (t.args) {
+      const vals = Object.values(t.args);
+      if (vals.length === 1 && typeof vals[0] === 'string' && vals[0].length < 25) label += `(${esc(vals[0])})`;
+    }
+    return `<span class="chip chip-tool">${label}</span>`;
+  }).join(' ');
+
+  const detailRow = `
+    <tr id="log-detail-${row.id}" class="log-detail" style="display:none">
+      <td colspan="5">
+        <div class="detail-panel">
+          ${summary ? `
+            <div class="detail-section" style="flex:2;min-width:200px">
+              <div class="detail-label">Summary</div>
+              <div style="font-size:.78rem;color:var(--text);line-height:1.55">${esc(summary)}</div>
+            </div>` : ''}
+          ${message ? `
+            <div class="detail-section" style="flex:2;min-width:200px">
+              <div class="detail-label">Message left</div>
+              <div style="font-size:.78rem;color:var(--text);line-height:1.55;font-style:italic">${esc(message)}</div>
+            </div>` : ''}
+          ${turns.length > 0 ? `
+            <div class="detail-section" style="flex:3;min-width:260px">
+              <div class="detail-label">Transcription</div>
+              <div class="transcript">
+                ${turns.map(t => `
+                  <div class="turn turn-${esc(t.role)}">
+                    <div class="turn-role">${t.role === 'caller' ? (row.direction === 'outbound' ? 'Party' : 'Caller') : 'PrismVox'}</div>
+                    ${esc(t.text)}
+                  </div>`).join('')}
+              </div>
+            </div>` : ''}
+          ${(ragUsed || tools.length > 0) ? `
+            <div class="detail-section">
+              <div class="detail-label">Context &amp; tools</div>
+              <div style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center">
+                ${ragUsed ? '<span class="chip chip-rag">✓ RAG</span>' : ''}
+                ${toolChips}
+              </div>
+            </div>` : ''}
+        </div>
+      </td>
+    </tr>`;
+
+  return mainRow + detailRow;
+}
+
+function toggleLog(id) {
+  const row = document.getElementById('log-row-' + id);
+  const detail = document.getElementById('log-detail-' + id);
+  if (!detail) return;
+  const open = detail.style.display !== 'none';
+  detail.style.display = open ? 'none' : '';
+  row.classList.toggle('open', !open);
+}
+function logsPage(dir) {
+  const next = _logsOffset + dir * LOGS_PER_PAGE;
+  if (next < 0 || next >= _logsTotal) return;
+  loadLogs(next);
+}
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${s}s`;
+}
+function reasonBadge(reason) {
+  if (!reason)               return '<span class="badge badge-live">live</span>';
+  if (reason==='transferred') return '<span class="badge badge-transfer">transferred</span>';
+  return '<span class="badge badge-hung">hung up</span>';
+}
+
+// ── Conversations (text channels) ─────────────────────────────────────────────
+const CONV_PER_PAGE = 20;
+let _convOffset = 0, _convTotal = 0;
+
+const CHANNEL_COLORS = { ui:'#8a8fb0', api:'#5b7af0', whatsapp:'#25d366', telegram:'#29a9eb', web:'#a855f7' };
+function channelBadge(ch) {
+  const c = CHANNEL_COLORS[ch] || '#8a8fb0';
+  return `<span class="chip" style="border-color:${c};color:${c}">${esc(ch || 'api')}</span>`;
+}
+
+async function loadConversations(offset = 0) {
+  _convOffset = offset;
+  const tbody = document.getElementById('conv-body');
+  tbody.innerHTML = '<tr><td colspan="5"><span class="muted">Loading…</span></td></tr>';
+  try {
+    const data = await api('GET', `/api/conversations?limit=${CONV_PER_PAGE}&offset=${offset}`);
+    _convTotal = data.total;
+    document.getElementById('conv-count').textContent = `${data.total} conversation${data.total!==1?'s':''}`;
+    tbody.innerHTML = data.items.length
+      ? data.items.map(row => buildConvRows(row)).join('')
+      : '<tr><td colspan="5"><span class="muted">No conversations yet.</span></td></tr>';
+    const page = Math.floor(offset / CONV_PER_PAGE) + 1;
+    const maxPage = Math.max(1, Math.ceil(_convTotal / CONV_PER_PAGE));
+    document.getElementById('conv-page').textContent = `Page ${page} / ${maxPage}`;
+    document.getElementById('conv-prev').disabled = offset <= 0;
+    document.getElementById('conv-next').disabled = offset + CONV_PER_PAGE >= _convTotal;
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function buildConvRows(row) {
+  const turns   = Array.isArray(row.turns) ? row.turns : [];
+  const started = new Date(row.started_at).toLocaleString('en', { dateStyle:'short', timeStyle:'short' });
+  const contact = row.contact ? esc(row.contact) : '<span class="muted">—</span>';
+  const last    = [...turns].reverse().find(t => t.text);
+  const preview = last ? esc(last.text.slice(0, 70)) + (last.text.length > 70 ? '…' : '') : '<span class="muted">empty</span>';
+  const rid     = Array.from(String(row.session_id), c => c.codePointAt(0).toString(16)).join('-');
+
+  const mainRow = `
+    <tr id="conv-row-${rid}" class="log-row" onclick="${turns.length?`toggleConv('${rid}')`:''}">
+      <td>${channelBadge(row.channel)}</td>
+      <td class="mono">${contact}</td>
+      <td style="white-space:nowrap;color:var(--muted)">${started}</td>
+      <td style="color:var(--muted)">${preview}</td>
+      <td><div class="log-reason-cell"><span class="badge badge-live">${turns.length}</span>${turns.length?'<span class="expand-btn">▶</span>':''}</div></td>
+    </tr>`;
+  if (!turns.length) return mainRow;
+
+  const bubbles = turns.map(t => {
+    if (t.role === 'tool')
+      return `<div class="msg msg-assistant"><div class="msg-bubble" style="font-family:monospace;font-size:.72rem;opacity:.85;background:var(--surface2)">🔧 ${esc(t.text)}</div></div>`;
+    const who = t.role === 'user' ? 'user' : 'assistant';
+    return `<div class="msg msg-${who}"><div class="msg-bubble">${esc(t.text)}</div></div>`;
+  }).join('');
+
+  const detailRow = `
+    <tr id="conv-detail-${rid}" class="log-detail" style="display:none">
+      <td colspan="5">
+        <div class="detail-panel" style="flex-direction:column">
+          <div style="display:flex;justify-content:space-between;align-items:center;width:100%">
+            <div class="detail-label">Transcription — session <span class="mono">${esc(row.session_id)}</span></div>
+            <button class="outline" style="width:auto" data-delete-conversation="${esc(row.session_id)}">🗑 Delete</button>
+          </div>
+          <div class="chat-msgs" style="max-height:340px">${bubbles}</div>
+        </div>
+      </td>
+    </tr>`;
+  return mainRow + detailRow;
+}
+
+function toggleConv(rid) {
+  const row = document.getElementById('conv-row-' + rid);
+  const detail = document.getElementById('conv-detail-' + rid);
+  if (!detail) return;
+  const open = detail.style.display !== 'none';
+  detail.style.display = open ? 'none' : '';
+  row.classList.toggle('open', !open);
+}
+
+function convPage(dir) {
+  const next = _convOffset + dir * CONV_PER_PAGE;
+  if (next < 0 || next >= _convTotal) return;
+  loadConversations(next);
+}
+
+async function deleteConversation(sessionId) {
+  if (!confirm('Delete this conversation?')) return;
+  try {
+    await api('DELETE', `/api/conversations/${encodeURIComponent(sessionId)}`);
+    loadConversations(_convOffset);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── Admin Chat ────────────────────────────────────────────────────────────────
+let _chatSessionId = sessionStorage.getItem('chat_session_id') || '';
+
+async function sendChat(e) {
+  e.preventDefault();
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  input.disabled = true;
+  document.getElementById('chat-send').disabled = true;
+
+  appendChatMsg('user', msg);
+  const typing = appendChatMsg('typing', '…');
+  scrollChat();
+
+  try {
+    const data = await api('POST', '/api/chat', { message: msg, session_id: _chatSessionId });
+    _chatSessionId = data.session_id;
+    sessionStorage.setItem('chat_session_id', _chatSessionId);
+    typing.remove();
+    appendChatMsg('assistant', data.reply);
+  } catch(e) {
+    typing.remove();
+    appendChatMsg('assistant', `Error: ${esc(e.message)}`);
+  } finally {
+    input.disabled = false;
+    document.getElementById('chat-send').disabled = false;
+    input.focus();
+    scrollChat();
+  }
+}
+
+function appendChatMsg(type, content) {
+  const el = document.createElement('div');
+  el.className = `msg msg-${type}`;
+  el.innerHTML = `<div class="msg-bubble">${esc(content)}</div>`;
+  document.getElementById('chat-msgs').appendChild(el);
+  return el;
+}
+
+function scrollChat() {
+  const el = document.getElementById('chat-msgs');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function resetChat() {
+  if (_chatSessionId) {
+    try { await api('DELETE', `/api/chat/${_chatSessionId}`); } catch {}
+  }
+  _chatSessionId = '';
+  sessionStorage.removeItem('chat_session_id');
+  document.getElementById('chat-msgs').innerHTML =
+    '<div class="msg msg-assistant"><div class="msg-bubble">Session reset. Ask me about the calls.</div></div>';
+}
+
+// ── Agent Chat (full agent over text) ─────────────────────────────────────────
+let _agentSessionId = sessionStorage.getItem('agentchat_session_id') || '';
+
+async function sendAgentChat(e) {
+  e.preventDefault();
+  const input = document.getElementById('agentchat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  input.disabled = true;
+  document.getElementById('agentchat-send').disabled = true;
+
+  appendAgentMsg('user', msg);
+  const typing = appendAgentMsg('typing', '…');
+  scrollAgentChat();
+
+  try {
+    const data = await api('POST', '/api/agent-chat', { message: msg, session_id: _agentSessionId, channel: 'ui' });
+    _agentSessionId = data.session_id;
+    sessionStorage.setItem('agentchat_session_id', _agentSessionId);
+    typing.remove();
+    (data.tools_used || []).forEach(t => appendAgentTool(t));
+    appendAgentMsg('assistant', data.reply);
+  } catch(e) {
+    typing.remove();
+    appendAgentMsg('assistant', `Error: ${esc(e.message)}`);
+  } finally {
+    input.disabled = false;
+    document.getElementById('agentchat-send').disabled = false;
+    input.focus();
+    scrollAgentChat();
+  }
+}
+
+function appendAgentMsg(type, content) {
+  const el = document.createElement('div');
+  el.className = `msg msg-${type}`;
+  el.innerHTML = `<div class="msg-bubble">${esc(content)}</div>`;
+  document.getElementById('agentchat-msgs').appendChild(el);
+  return el;
+}
+
+function appendAgentTool(t) {
+  const el = document.createElement('div');
+  el.className = 'msg msg-assistant';
+  const args = JSON.stringify(t.arguments || {});
+  el.innerHTML = `<div class="msg-bubble" style="font-family:monospace;font-size:.72rem;opacity:.85;background:var(--surface2)">`
+    + `🔧 <b>${esc(t.name)}</b>(${esc(args)})<br>→ ${esc((t.result || '').slice(0, 600))}</div>`;
+  document.getElementById('agentchat-msgs').appendChild(el);
+  return el;
+}
+
+function scrollAgentChat() {
+  const el = document.getElementById('agentchat-msgs');
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+async function resetAgentChat() {
+  if (_agentSessionId) {
+    try { await api('DELETE', `/api/agent-chat/${_agentSessionId}`); } catch {}
+  }
+  _agentSessionId = '';
+  sessionStorage.removeItem('agentchat_session_id');
+  document.getElementById('agentchat-msgs').innerHTML =
+    '<div class="msg msg-assistant"><div class="msg-bubble">Session reset. The agent config is reloaded on the next message.</div></div>';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const resp = await fetch(path, opts);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || resp.statusText);
+  }
+  return resp.json();
+}
+function get(id)         { const el = document.getElementById(id); return el.type==='checkbox'?el.checked:el.value; }
+function getText(id)     { return document.getElementById(id).value; }
+function setText(id, v)  { document.getElementById(id).value = v; }
+function getCheck(id)    { return document.getElementById(id).checked; }
+function setCheck(id, v) { document.getElementById(id).checked = !!v; }
+function show(id)        { document.getElementById(id).style.display = ''; }
+function hide(id)        { document.getElementById(id).style.display = 'none'; }
+function esc(s)          { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// User-controlled identifiers remain data, never JavaScript source.
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-delete-conversation]');
+  if (!button) return;
+  event.stopPropagation();
+  deleteConversation(button.dataset.deleteConversation);
+});
+document.addEventListener('change', event => {
+  const input = event.target.closest('[data-mcp-tool]');
+  if (input) toggleMCPTool(Number(input.dataset.mcpServer), input.dataset.mcpTool, input.checked);
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+updateThemeBtn();
+loadStatus();
+loadConfig();
+</script>
+</body>
+</html>

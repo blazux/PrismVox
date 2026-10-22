@@ -1,0 +1,67 @@
+# Optional fast local model on an NVIDIA GPU. Configure the standard tier with
+# API URL http://fast-llm:8080/v1 and model qwen3.5-9b in Agent settings.
+services:
+  fast-llm:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:95cdc1510dbc5bc15735529353d72ace9fc96b9aeb0dd6c4cdaf1a6b3f70776f
+    command:
+      - --model
+      - /models/${FAST_LLM_MODEL_FILE:-Qwen3.5-9B-Q8_0.gguf}
+      - --alias
+      - ${FAST_LLM_MODEL_NAME:-qwen3.5-9b}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --n-gpu-layers
+      - "99"
+      - --ctx-size
+      - "32768"
+      - --parallel
+      - "2"
+      - --threads
+      - "4"
+      - --threads-batch
+      - "8"
+      - --flash-attn
+      - "on"
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      - --jinja
+      - --reasoning
+      - "off"
+      # Qwen3.5 non-thinking defaults; limited to this local endpoint.
+      - --temp
+      - "0.7"
+      - --top-p
+      - "0.8"
+      - --top-k
+      - "20"
+      - --min-p
+      - "0"
+      - --presence-penalty
+      - "1.5"
+      - --repeat-penalty
+      - "1.0"
+      - --cors-origins
+      - http://localhost
+    volumes:
+      - ${FAST_LLM_MODEL_DIR:-./.dev/models/qwen3.5-9b}:/models:ro
+    ports:
+      - "127.0.0.1:${FAST_LLM_PORT:-18120}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    mem_limit: 16g
+    cpus: 6
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    networks: [agentnet]
+    restart: unless-stopped

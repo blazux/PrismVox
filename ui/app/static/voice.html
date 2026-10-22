@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Speech providers</title>
+<script>
+const prefix=location.pathname.startsWith('/api/vox/')?'/api/vox':'/api';
+try{
+ const syncTheme=()=>document.documentElement.dataset.theme=parent.document.documentElement.dataset.theme||localStorage.getItem('theme')||'dark';syncTheme();
+ if(parent!==window){const observer=new MutationObserver(syncTheme);observer.observe(parent.document.documentElement,{attributes:true,attributeFilter:['data-theme']});addEventListener('pagehide',()=>observer.disconnect());}
+}catch{}
+const style=document.createElement('link');style.rel='stylesheet';style.href=prefix+'/voice/style';document.head.append(style);
+</script>
+<style>body{background:transparent}form{padding:2px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px}label{display:block;margin:0;font-size:12px}input,select{width:100%;margin:3px 0 0!important;min-width:0}fieldset{margin:10px 0;padding:10px}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.hint{font-size:11px}.wide{grid-column:1/-1}[hidden]{display:none!important}@media(max-width:480px){.grid{grid-template-columns:1fr}}</style>
+</head><body>
+<form id="voice-form">
+<div class="grid">
+<label>Speech recognition<select id="voice_stt_provider"><option value="openai">Self-hosted · OpenAI-compatible API</option><option value="service">Legacy HTTP service</option><option value="elevenlabs">ElevenLabs</option></select></label>
+<label>Speech synthesis<select id="voice_tts_provider"><option value="openai">Self-hosted · OpenAI-compatible API</option><option value="service">Legacy HTTP service</option><option value="elevenlabs">ElevenLabs</option></select></label>
+<label id="stt-service">STT API URL<input id="voice_stt_url" type="url" placeholder="http://stt:9000"></label>
+<label id="tts-service">TTS API URL<input id="voice_tts_url" type="url" placeholder="http://tts:8000/synthesize"></label>
+</div>
+<label style="margin-top:8px">Language<input id="voice_language" maxlength="3" placeholder="fr — empty for automatic detection"></label>
+<fieldset id="external-settings" hidden><legend>Self-hosted APIs</legend><div class="grid">
+<label id="external-stt-model">Recognition model<input id="voice_service_stt_model" placeholder="Model ID, if required by your server"></label>
+<label id="external-tts-model">Speech model<input id="voice_service_tts_model" placeholder="Model ID from your server"></label>
+<label id="external-voice">Voice<input id="voice_service_voice" placeholder="Voice ID, if required by your server"></label>
+<label>API key (optional)<input id="voice_service_api_key" type="password" autocomplete="new-password" placeholder="Leave empty for an unauthenticated service"></label>
+</div><p class="hint">Use the API root including /v1. Recognition uses /audio/transcriptions; synthesis uses /audio/speech. Services run outside PrismVox.</p></fieldset>
+<fieldset id="eleven-settings" hidden><legend>ElevenLabs</legend>
+<div class="grid">
+<label>API key<input id="voice_api_key" type="password" autocomplete="new-password" placeholder="Enter your API key"></label>
+<label id="stt-model">Recognition model<select id="voice_stt_model"><option value="scribe_v2_realtime">Scribe v2 · real-time</option><option value="scribe_v2">Scribe v2 · batch</option></select></label>
+<label id="tts-model">Speech model<input id="voice_tts_model" list="speech-models" placeholder="eleven_flash_v2_5"><datalist id="speech-models"></datalist></label>
+<label id="tts-voice" class="wide">Voice<select id="voice_id"><option value="">Connect to load voices</option></select></label>
+<label id="tts-stability" class="wide">Voice stability<input id="voice_stability" type="number" min="0" max="1" step="0.05" placeholder="Provider setting"><span class="hint">0: more expressive · 1: more consistent. Leave empty to use the provider setting.</span></label>
+</div>
+<div class="actions" style="margin-top:8px"><button type="button" id="connect">Connect</button><span class="hint" id="connection-status" role="status">Connect to load speech models and voices.</span></div>
+<p class="hint" style="margin:6px 0 0">Audio and transcripts are processed by ElevenLabs. Provider charges apply.</p>
+</fieldset>
+<div class="actions" style="margin-top:10px"><button type="submit" id="save">Save voice settings</button><button type="button" id="reset">Reset</button><span class="hint" id="save-status" role="status"></span></div>
+<small class="hint">Changes apply to new calls. Current calls keep their voice settings.</small>
+</form>
+<script>
+const fields=['voice_stt_provider','voice_tts_provider','voice_stt_url','voice_tts_url','voice_language','voice_stt_model','voice_tts_model','voice_id','voice_stability','voice_service_stt_model','voice_service_tts_model','voice_service_voice'];
+const $=id=>document.getElementById(id);let current={},busy=false;
+function visibility(){const stt=$('voice_stt_provider').value==='elevenlabs',tts=$('voice_tts_provider').value==='elevenlabs';$('stt-service').hidden=stt;$('tts-service').hidden=tts;$('eleven-settings').hidden=!(stt||tts);$('stt-model').hidden=!stt;$('tts-model').hidden=!tts;$('tts-voice').hidden=!tts;$('tts-stability').hidden=!tts;const extSTT=$('voice_stt_provider').value==='openai',extTTS=$('voice_tts_provider').value==='openai';$('external-settings').hidden=!(extSTT||extTTS);$('external-stt-model').hidden=!extSTT;$('external-tts-model').hidden=!extTTS;$('external-voice').hidden=!extTTS;}
+function values(){return Object.fromEntries([...fields,'voice_api_key','voice_service_api_key'].map(k=>[k,$(k).value]));}
+async function api(method,path,body){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),35000);try{const r=await fetch(prefix+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:controller.signal});let d;try{d=await r.json()}catch{throw Error('Could not complete the request. Check the configuration service.')}if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'Request failed');return d;}catch(e){if(e.name==='AbortError')throw Error('Connection timed out. Try again.');throw e;}finally{clearTimeout(timer);}}
+function options(voices,id){$('voice_id').replaceChildren(new Option('Choose a voice',''),...voices.map(v=>new Option(v.name,v.id)));if(id&&!voices.some(v=>v.id===id))$('voice_id').add(new Option(id,id));$('voice_id').value=id||'';}
+function render(cfg){current=cfg;fields.filter(k=>k!=='voice_id').forEach(k=>$(k).value=cfg[k]||'');options([],cfg.voice_id);$('voice_service_api_key').value='';$('voice_service_api_key').placeholder=cfg.service_api_key_configured?'Key saved — leave empty to keep':'Optional service API key';$('voice_api_key').value='';$('voice_api_key').placeholder=cfg.api_key_configured?'Key saved — leave empty to keep':'Enter your API key';visibility();}
+function lock(on){busy=on;for(const el of $('voice-form').elements)el.disabled=on;}
+async function load(){lock(true);try{render(await api('GET','/voice'));$('save-status').textContent='';}catch(e){$('save-status').textContent=e.message;}finally{lock(false);}}
+$('voice-form').addEventListener('input',()=>{$('save-status').textContent='Unsaved changes';visibility();});
+$('connect').onclick=async()=>{if(busy)return;const draft=values();lock(true);$('connection-status').textContent='Connecting…';try{const data=await api('POST','/voice/connect',{values:draft});$('speech-models').replaceChildren(...data.models.map(m=>new Option(m.name,m.id)));options(data.voices,draft.voice_id);$('connection-status').textContent=data.notice || 'Connected. Choose a model and voice, then save.';}catch(e){$('connection-status').textContent=e.message;}finally{lock(false);}};
+$('voice-form').onsubmit=async e=>{e.preventDefault();if(busy)return;const draft=values();lock(true);$('save-status').textContent='Saving…';try{render(await api('PUT','/voice',{values:draft}));$('save-status').textContent='Saved · applies to new calls';for(const name of ['prismvox','prismconnect'])parent.postMessage({type:name+'-voice-saved'},location.origin);}catch(e){$('save-status').textContent=e.message;}finally{lock(false);}};
+$('reset').onclick=load;
+new ResizeObserver(()=>{for(const name of ['prismvox','prismconnect'])parent.postMessage({type:name+'-voice-height',height:document.body.scrollHeight+8},location.origin)}).observe(document.body);
+load();
+</script></body></html>

@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+CLAUDE.md
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code / assistant-local files
+.claude/
+MEMORY.md
+
+# Persistent encryption keys belong in the private Docker volume.
+*.key
+*.pem
+
+# Local model cache, deployment snapshots and private benchmark output.
+.dev/
+
+# Local diagnostics and recordings
+*.log
+*.sql.gz
+*.dump
+*.bak
+*.backup
+/recordings/
+/secrets/
+/certs/

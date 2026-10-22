@@ -1,0 +1,11 @@
+# Direct ElevenLabs: no separate STT/TTS containers. Configure the key, models
+# and voice from Speech providers. Existing calls keep their configuration.
+services:
+  agent:
+    environment:
+      - STT_PROVIDER=elevenlabs
+      - TTS_PROVIDER=elevenlabs
+  ui:
+    environment:
+      - STT_PROVIDER=elevenlabs
+      - TTS_PROVIDER=elevenlabs
