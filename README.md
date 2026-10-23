@@ -4,6 +4,8 @@
   <p><em>An open-source AI phone receptionist for your SIP trunk or PBX.</em></p>
 </div>
 
+**[Documentation](https://www.thelastserver.com/docs/prismvox/installation/)**
+
 PrismVox answers calls, retrieves information from your knowledge base, transfers
 callers, records messages and makes outbound calls with a supplied mission. It
 runs independently or connects to [Prism](https://github.com/blazux/prism), with
@@ -38,6 +40,9 @@ is bundled or deployed.
 - No GPU is required when your model and speech providers run elsewhere.
 
 ## Quick start
+
+See the [installation guide](https://www.thelastserver.com/docs/prismvox/installation/)
+for detailed setup instructions and links to SIP, speech-provider and console configuration.
 
 ```sh
 git clone https://github.com/blazux/PrismVox.git
