@@ -229,18 +229,34 @@ class AudioConversionTests(unittest.IsolatedAsyncioTestCase):
 
 
 
-class ModelTierTests(unittest.IsolatedAsyncioTestCase):
+class SharedModelTests(unittest.IsolatedAsyncioTestCase):
+    async def test_config_hides_retired_choice_and_model_catalog_uses_shared_model(self):
+        app=load_app()
+        app._pool=AsyncMock()
+        app._pool.fetch.return_value=[{'key':'llm_model_standard','value':'shared'}, {'key':'llm_model_oncall','value':'retired'}, {'key':'llm_url_oncall','value':'http://retired.invalid/v1'}]
+        app._pool.fetchval.return_value='shared'
+        self.assertEqual((await app.openai_models())['data'][0]['id'],'shared')
+        config=await app.get_config()
+        self.assertEqual(config['llm_model_standard'],'shared')
+        self.assertNotIn('llm_model_oncall',config)
+        self.assertNotIn('llm_url_oncall',config)
+        with self.assertRaises(app.HTTPException):
+            await app.update_config(app.ConfigUpdate(values={'llm_model_oncall':'retired'}))
+        app._pool.acquire.assert_not_called()
+
     async def test_local_standard_keeps_gateway_credentials_isolated(self):
         app=load_app();app.LLM_BASE_URL='http://gateway.invalid/v1';app.LLM_API_KEY='private-gateway-fixture'
         cfg={'llm_url_standard':'http://fast-llm:8080/v1','llm_model_standard':'fast','llm_model_oncall':'heavy'}
         class Pool:
             async def fetchval(self,sql,key):return cfg.get(key)
         pool=Pool()
-        self.assertEqual(await app._backend_for_model(pool,'fast'),('http://fast-llm:8080/v1',{}))
-        self.assertEqual(await app._backend_for_model(pool,'heavy'),('http://gateway.invalid/v1',{'Authorization':'Bearer private-gateway-fixture'}))
+        self.assertEqual(await app._backend_for(pool),('http://fast-llm:8080/v1',{}))
+        self.assertEqual(await app._model_for(pool),'fast')
 
+        cfg['llm_model_standard']=''
+        self.assertEqual(await app._model_for(pool),app.LLM_MODEL)
         cfg['llm_url_standard']='   '
-        self.assertEqual(await app._backend_for(pool,'standard'),('http://gateway.invalid/v1',{'Authorization':'Bearer private-gateway-fixture'}))
+        self.assertEqual(await app._backend_for(pool),('http://gateway.invalid/v1',{'Authorization':'Bearer private-gateway-fixture'}))
 
     async def test_text_stream_and_tool_loop_use_selected_backend(self):
         app=load_app();app.LLM_API_KEY='private-gateway-fixture'

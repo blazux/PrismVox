@@ -242,9 +242,9 @@
       <small class="hint">LLM instructions for inbound calls. No markdown, short sentences (spoken aloud).</small>
     </label>
     <label>
-        Model — inbound calls &amp; chat
+        PrismVox model — all calls &amp; chat
         <input type="text" id="cfg-llm_model_standard" placeholder="Model ID from your API">
-        <small class="hint">Model ID exposed by your API. Leave empty to use the deployment default.</small>
+        <small class="hint">Used for inbound and outbound calls, transfer recipients, summaries and console chats. Leave empty to use the deployment default.</small>
       </label>
 
     <label>
@@ -252,15 +252,10 @@
       <textarea id="cfg-outbound_system_prompt" rows="6"></textarea>
       <small class="hint">Instructions for agent-initiated calls (Outbound Calls tab). Each call's mission is appended automatically under a "Mission" section. No greeting: the opening is generated from the mission.</small>
     </label>
-    <label>
-        Model — outbound calls &amp; transfer recipient
-        <input type="text" id="cfg-llm_model_oncall" placeholder="Model ID from your API">
-        <small class="hint">Model ID for outbound missions and conversations with transfer recipients. Leave empty to use the deployment default.</small>
-      </label>
 
-    <details style="margin-bottom:10px"><summary>Model API URLs (optional)</summary>
-      <label>Inbound model API root<input type="url" id="cfg-llm_url_standard" placeholder="Empty = deployment gateway"></label>
-      <label>Outbound model API root<input type="url" id="cfg-llm_url_oncall" placeholder="Empty = deployment gateway"></label>
+
+    <details style="margin-bottom:10px"><summary>Model API URL (optional)</summary>
+      <label>Model API root<input type="url" id="cfg-llm_url_standard" placeholder="Empty = deployment gateway"></label>
       <small class="hint">Include /v1. Separate endpoints receive no deployment gateway API key.</small>
     </details>
 
@@ -907,8 +902,6 @@ async function loadConfig(root = document) {
   setText('cfg-outbound_system_prompt', cfg.outbound_system_prompt || '');
   setText('cfg-llm_model_standard', cfg.llm_model_standard || '');
   setText('cfg-llm_url_standard', cfg.llm_url_standard || '');
-  setText('cfg-llm_url_oncall', cfg.llm_url_oncall || '');
-  setText('cfg-llm_model_oncall', cfg.llm_model_oncall || '');
   setText('cfg-transfer_dialog_turns', cfg.transfer_dialog_turns || '');
   setText('cfg-admin_chat_prompt', cfg.admin_chat_prompt || '');
   PHRASE_KEYS.forEach(k => setText('cfg-' + k, cfg[k] || ''));

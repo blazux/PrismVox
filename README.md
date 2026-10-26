@@ -137,7 +137,7 @@ For OpenAI-compatible services, manage voice uploads/deletion on the speech serv
 | Console page | What you configure or inspect |
 | --- | --- |
 | Overview | SIP status, active calls and aggregate call activity |
-| Settings → Agents & models | Inbound/outbound instructions, models and knowledge/MCP switches |
+| Settings → Agents & models | Shared Vox model, separate inbound/outbound instructions and knowledge/MCP switches |
 | Settings → Voice & greeting | Greeting, voice, speech providers, spoken phrases and pronunciation |
 | Settings → Transfers & directory | Contacts, blind/attended transfer preferences and recipient dialogue limit |
 | Settings → Phone connection | Trunk, TLS/UDP transport and transfer method |
@@ -152,10 +152,15 @@ message or hang-up tool. Keep the persona concise and give it a knowledge base
 for company-specific facts. Start with a few test calls before connecting a
 production number.
 
-Incoming switchboard calls use the **standard** model. Outbound missions,
-transfer-recipient conversations and operator chat use the **on-call** model.
-Each can use a separate API URL; leaving it empty uses `OPENAI_BASE_URL`.
+PrismVox uses **one model** for incoming unknown callers, outbound missions,
+transfer recipients, summaries and console chats. Configure it in
+**Settings → Agents & models → PrismVox model — all calls & chat**. The
+optional API URL applies to all these uses; an empty URL uses `OPENAI_BASE_URL`.
 Gateway credentials are not forwarded to a different model endpoint.
+
+When upgrading, the existing inbound model and endpoint become the shared Vox
+configuration. Previous outbound overrides are no longer used. Inbound and
+outbound instructions remain separate.
 
 ### Saving settings
 
@@ -188,7 +193,8 @@ standard project name, that network is `prismvox_agentnet`.
 - **Prism → Admin → Telephony → Agents & models → Conversation model — recognised callers**
   selects the model for recognized callers. An empty selection follows the Prism
   deployment default; the web default is unchanged. Unknown callers and outbound
-  missions have separate Vox model fields in the same section.
+  missions share the **PrismVox model — unknown callers & outbound calls** in
+  the same section. Its endpoint is independent of the Prism model catalogue.
 
 The connected **Telephony** page groups settings into **Agents & models**,
 **Voice & greeting**, **Transfers & directories** and **Phone connection**.

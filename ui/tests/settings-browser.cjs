@@ -32,12 +32,13 @@ const root=path.resolve(__dirname,'../app/static');
   await page.locator('nav button[onclick*="setup"]').click();
   await page.locator('#cfg-system_prompt').fill('You are the receptionist for Example Workshop. Answer briefly and use the knowledge base for company information.');
   await page.locator('#cfg-outbound_system_prompt').fill('Carry out the call mission. Ask one question at a time and confirm the outcome before ending the call.');
-  await page.locator('#cfg-llm_model_standard').fill('example-inbound');
-  await page.locator('#cfg-llm_model_oncall').fill('example-outbound');
+  await page.locator('#cfg-llm_model_standard').fill('example-vox');
   await page.screenshot({path:path.join(output,'agent.png'),fullPage:true});
   await page.evaluate(()=>loadConfig());
  }
  await page.locator('nav button[onclick*="setup"]').click();
+ assert.equal(await page.locator('#cfg-llm_model_oncall').count(),0);
+ assert.equal(await page.locator('#cfg-llm_url_oncall').count(),0);
  await page.locator('#cfg-system_prompt').fill('Unsaved agent draft');
  await page.locator('#tab-setup .subtabs button[onclick*="voicecfg"]').click();
  await page.locator('#cfg-greeting').fill('Welcome');

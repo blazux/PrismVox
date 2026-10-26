@@ -397,16 +397,9 @@ func (h *Handler) Run(ctx context.Context) {
 	h.ttsClient.SpellWords = cfg.Get("tts_spell_words")
 	h.ttsClient.SpellExceptions = cfg.Get("tts_spell_exceptions")
 
-	// Two-tier LLM (UI → Configuration → Agent): inbound switchboard answers with
-	// a small fast model (caller experience first), agent-originated on-call
-	// missions get a larger one (capability first — colleagues tolerate a slower
-	// pace). Both are aliases on the same OpenAI-compatible endpoint (LiteLLM);
-	// an empty key keeps the OPENAI_MODEL env default.
-	tier := "standard"
-	if h.task != nil {
-		tier = "oncall"
-	}
-	if err := h.llmClient.ConfigureTier(cfg.Raw, tier); err != nil {
+	// One Vox model for all local conversations; recognized callers route to Prism.
+
+	if err := h.llmClient.Configure(cfg.Raw); err != nil {
 		log.Printf("[%s] Model configuration unavailable: %v", h.channelID, err)
 		return
 	}
@@ -1822,7 +1815,7 @@ func (h *Handler) attendedTransferInner(
 	// agent-originated missions). A copy keeps the caller-facing client untouched
 	// (the announcement generator may still be using it concurrently).
 	recipientClient := *h.llmClient
-	if err := recipientClient.ConfigureTier(cfg.Raw, "oncall"); err != nil {
+	if err := recipientClient.Configure(cfg.Raw); err != nil {
 		log.Printf("[%s] Recipient model configuration unavailable: %v", h.channelID, err)
 		return "no_response"
 	}

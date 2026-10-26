@@ -1,5 +1,5 @@
-# Optional fast local model on an NVIDIA GPU. Configure the standard tier with
-# API URL http://fast-llm:8080/v1 and model qwen3.5-9b in Agent settings.
+# Optional fast local model on an NVIDIA GPU. Configure the shared Vox model with
+# API URL http://fast-llm:8080/v1 and model qwen3.5-9b in Agents & models settings.
 services:
   fast-llm:
     image: ghcr.io/ggml-org/llama.cpp@sha256:95cdc1510dbc5bc15735529353d72ace9fc96b9aeb0dd6c4cdaf1a6b3f70776f

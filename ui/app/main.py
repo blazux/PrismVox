@@ -68,28 +68,23 @@ def _llm_headers() -> dict:
     return {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
 
 
-async def _model_for(pool, tier: str) -> str:
-    """Resolve the configured model for a tier ('standard'|'oncall');
-    falls back to the OPENAI_MODEL env default."""
+async def _model_for(pool) -> str:
+    """Resolve the shared Vox model, retaining the existing inbound setting."""
     try:
-        v = await pool.fetchval("SELECT value FROM config WHERE key=$1", f"llm_model_{tier}")
-        if v:
-            return v
+        v = await pool.fetchval("SELECT value FROM config WHERE key=$1", "llm_model_standard")
+        if v and v.strip():
+            return v.strip()
     except Exception:
         pass
     return LLM_MODEL
 
 
-async def _backend_for(pool, tier):
-    override = await pool.fetchval("SELECT value FROM config WHERE key=$1", f"llm_url_{tier}")
+async def _backend_for(pool):
+    override = await pool.fetchval("SELECT value FROM config WHERE key=$1", "llm_url_standard")
     endpoint = (override or '').strip().rstrip('/') or LLM_BASE_URL.rstrip('/')
-    # A per-tier local service must never receive the deployment gateway's key.
+    # A local service must never receive the deployment gateway's key.
     return endpoint, _llm_headers() if endpoint == LLM_BASE_URL.rstrip('/') else {}
 
-
-async def _backend_for_model(pool, model):
-    standard, oncall = await _model_for(pool, 'standard'), await _model_for(pool, 'oncall')
-    return await _backend_for(pool, 'oncall' if model == oncall and model != standard else 'standard')
 
 
 LLM_MODEL    = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "Qwen/Qwen2.5-7B-Instruct"
@@ -343,7 +338,7 @@ voice_config.install(app, _pool_or_error)
 async def get_config():
     pool = _pool_or_error()
     rows = await pool.fetch("SELECT key, value FROM config ORDER BY key")
-    return _redact({r["key"]: r["value"] for r in rows})
+    return _redact({r["key"]: r["value"] for r in rows if r["key"] not in {"llm_model_oncall", "llm_url_oncall"}})
 
 
 class ConfigUpdate(BaseModel):
@@ -355,8 +350,10 @@ async def update_config(body: ConfigUpdate):
     pool = _pool_or_error()
     # The generic config form never carries secrets (they are redacted on read, so
     # it would round-trip a blank and wipe them). Secrets are set via PUT /api/sip.
+    if {"llm_model_oncall", "llm_url_oncall"} & body.values.keys():
+        raise HTTPException(400, 'Vox uses one model. Use llm_model_standard and llm_url_standard.')
     values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS and k not in voice_config.KEYS}
-    for key in ('llm_url_standard','llm_url_oncall'):
+    for key in ('llm_url_standard',):
         if values.get(key, '').strip():
             parsed = urlparse(values[key].strip())
             if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
@@ -381,14 +378,12 @@ async def update_config(body: ConfigUpdate):
 # the rendered file from env on first boot; from then on the UI owns it.
 
 async def _seed_llm_config(pool: asyncpg.Pool) -> None:
-    """Seed the two-tier LLM model aliases on first run (never overwrites).
-    standard = inbound switchboard (fast, caller experience);
-    oncall   = agent-originated missions (capable, MCP checks)."""
+    """Seed the shared Vox model without overwriting the existing inbound choice.
+    Legacy oncall rows remain stored for rollback, but are no longer used."""
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
-                for key, val in (("llm_model_standard", LLM_MODEL),
-                                 ("llm_model_oncall", LLM_MODEL)):
+                for key, val in (("llm_model_standard", LLM_MODEL),):
                     await conn.execute(
                         """INSERT INTO config (key, value, updated_at)
                            VALUES ($1, $2, NOW())
@@ -1059,11 +1054,12 @@ async def health():
     except Exception:
         results.update(tts="error", stt="error")
 
-    # LLM gateway — /health sits at the host root, outside /v1
-    results["llm"] = await _http_health(f"{LLM_ROOT_URL}/health")
-
-    # Model name for UI display
-    results["model"] = LLM_MODEL.split("/")[-1]
+    try:
+        endpoint, _ = await _backend_for(_pool_or_error())
+        results["llm"] = await _http_health(endpoint.removesuffix('/v1') + '/health')
+        results["model"] = await _model_for(_pool_or_error())
+    except Exception:
+        results["llm"] = "error"
 
     return results
 
@@ -1394,12 +1390,12 @@ async def chat(body: ChatMessage):
     messages = [{"role": "system", "content": sess["system"]}] + sess["history"]
 
     try:
-        backend_url, backend_headers = await _backend_for(pool, "oncall")
+        backend_url, backend_headers = await _backend_for(pool)
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{backend_url}/chat/completions",
                 json={
-                    "model":       await _model_for(pool, "oncall"),
+                    "model":       await _model_for(pool),
                     "messages":    messages,
                     "temperature": 0.7,
                     "max_tokens":  512,
@@ -1744,8 +1740,8 @@ async def agent_chat(body: AgentChatMessage):
 
         tool_trace: list[dict] = []
         reply = ""
-        model = await _model_for(pool, "standard")
-        backend_url, backend_headers = await _backend_for(pool, "standard")
+        model = await _model_for(pool)
+        backend_url, backend_headers = await _backend_for(pool)
         try:
             for _ in range(5):  # bounded tool loop
                 payload = {
@@ -1847,11 +1843,11 @@ async def _build_agent_messages(pool: asyncpg.Pool, client_messages: list[dict])
 async def _agent_run_tool_loop(messages: list[dict], tools: list, routing: dict,
                                model: str = "") -> str:
     """Bounded tool loop (mirror of /api/agent-chat). Returns the final reply text."""
-    backend_url, backend_headers = await _backend_for_model(_pool_or_error(), model)
+    backend_url, backend_headers = await _backend_for(_pool_or_error())
     reply = ""
     for _ in range(5):
         payload = {
-            "model":                model or LLM_MODEL,
+            "model":                model or await _model_for(_pool_or_error()),
             "messages":             messages,
             "temperature":          0.7,
             "max_tokens":           512,
@@ -1899,9 +1895,9 @@ async def _agent_run_tool_loop(messages: list[dict], tools: list, routing: dict,
 
 async def _sglang_stream(messages: list[dict], model: str = ""):
     """Relay SGLang content deltas (genuine token streaming, no tools)."""
-    backend_url, backend_headers = await _backend_for_model(_pool_or_error(), model)
+    backend_url, backend_headers = await _backend_for(_pool_or_error())
     payload = {
-        "model":                model or LLM_MODEL,
+        "model":                model or await _model_for(_pool_or_error()),
         "messages":             messages,
         "temperature":          0.7,
         "max_tokens":           512,
@@ -1961,7 +1957,7 @@ class OpenAIChatRequest(BaseModel):
 async def openai_models():
     """Minimal model list — some OpenAI clients probe this before chatting."""
     return {"object": "list", "data": [
-        {"id": LLM_MODEL, "object": "model", "created": 0, "owned_by": "phoneagent"},
+        {"id": await _model_for(_pool_or_error()), "object": "model", "created": 0, "owned_by": "phoneagent"},
     ]}
 
 
@@ -1983,7 +1979,9 @@ async def openai_chat_completions(body: OpenAIChatRequest):
 
     cid     = "chatcmpl-" + _uuid.uuid4().hex
     created = int(time.time())
-    model   = body.model or await _model_for(pool, "standard")
+    model   = await _model_for(pool)
+    if body.model and body.model != model:
+        raise HTTPException(400, "Unknown model. Use the PrismVox model listed by /v1/models.")
 
     if not body.stream:
         try:
@@ -2094,13 +2092,14 @@ async def voice_test(
     )
 
     try:
+        backend_url, backend_headers = await _backend_for(pool)
         async with aiohttp.ClientSession() as s:
             async with s.post(
-                f"{LLM_BASE_URL}/chat/completions",
-                json={"model": LLM_MODEL, "messages": messages,
+                f"{backend_url}/chat/completions",
+                json={"model": await _model_for(pool), "messages": messages,
                       "temperature": 1.0, "top_p": 0.95, "max_tokens": 256,
                       "chat_template_kwargs": {"enable_thinking": False}},
-                headers=_llm_headers(),
+                headers=backend_headers,
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as r:
                 r.raise_for_status()
