@@ -510,7 +510,7 @@ func (h *Handler) outboundOpening(ctx context.Context, cfg *config.Config) strin
 func (h *Handler) generateAnnouncement(ctx context.Context, cfg *config.Config, at *attendedTransferReq, out chan<- string) {
 	sys := "Tu es le standard téléphonique de l'entreprise. Tu viens d'appeler " + at.ContactName +
 		" pour lui annoncer un appel en attente et lui demander s'il souhaite le prendre. " +
-		"Formule une annonce orale courte et naturelle, en français, en une seule phrase lue à voix haute. " +
+		"Formule une annonce orale courte et naturelle, en français, en une seule phrase lue à voix haute. Vouvoie cet interlocuteur. " +
 		"Termine en lui demandant s'il souhaite prendre l'appel. Ne te présente pas et ne te fais jamais passer pour l'appelant. " +
 		"Donne uniquement la phrase à dire, sans guillemets ni préambule."
 	info := fmt.Sprintf("Appelant : %s.", at.CallerName)
@@ -557,9 +557,13 @@ Tu disposes des outils take_message et end_call. Pour prendre un message ou racc
 // the matching non-editable tool-usage contract is appended (see toolRules*).
 func (h *Handler) systemPrompt(cfg *config.Config) string {
 	if h.task == nil {
-		return h.withMemory(cfg.SystemPrompt + toolRulesInbound)
+		prompt := cfg.SystemPrompt + toolRulesInbound
+		if h.llmClient == nil || !h.llmClient.Docked() {
+			prompt += "\nVouvoie l'interlocuteur, même s'il te tutoie."
+		}
+		return h.withMemory(prompt)
 	}
-	sp := cfg.Get("outbound_system_prompt") + "\n\n## Mission\n"
+	sp := cfg.Get("outbound_system_prompt") + "\nVouvoie l'interlocuteur, même s'il te tutoie." + "\n\n## Mission\n"
 	if h.task.ContactName != "" {
 		sp += "Interlocuteur à joindre : " + h.task.ContactName + ".\n"
 	}
@@ -1362,7 +1366,7 @@ func (h *Handler) handleToolCalls(
 			}
 			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "take_message", "args": args, "outcome": "recorded_in_call_log_not_delivered"})
 			// The message lands in the call log; nobody is paged. Don't promise a handoff.
-			builtinSpoken = append(builtinSpoken, fmt.Sprintf("J'ai bien noté votre message pour %s.", recipient))
+			builtinSpoken = append(builtinSpoken, fmt.Sprintf("Le message pour %s est bien noté.", recipient))
 			log.Printf("[%s] Message saved", h.channelID)
 
 		case "search_knowledge_base":
@@ -2021,25 +2025,25 @@ func (h *Handler) synthesizeFiller(ctx context.Context, text string, wavCh chan<
 	}
 }
 
-// generateReprompt asks the LLM for a short, context-aware nudge when the caller
-// has gone quiet ("Vous me demandiez nos horaires — vous êtes toujours là ?").
-// Unlike the phrases played during a transfer, latency costs nothing here: nobody
-// is speaking. It is bounded anyway (repromptTimeout) and falls back to the fixed
-// phrase_still_there whenever the model is slow, errors, or returns nothing —
-// so a dead LLM still leaves the agent able to re-prompt and hang up politely.
+// Re-prompts use the recent dialogue, not the switchboard persona: a recognised
+// caller may be speaking to their personal Prism agent. Keep that agent's register.
+const repromptPrompt = "Tu écris uniquement une relance après un silence au téléphone. Une seule phrase courte : rappelle le sujet en quelques mots, puis demande si la personne est encore en ligne. Ne réponds pas à sa demande, ne relance pas la collecte de renseignements, ne prétends pas passer un nouvel appel. Exemple de structure : « À propos du rendez-vous, toujours en ligne ? »."
+
+// generateReprompt falls back to the configured phrase on an empty history,
+// timeout, failed request or empty output. It never executes tools.
 func (h *Handler) generateReprompt(ctx context.Context, cfg *config.Config, attempt int) string {
 	fallback := cfg.Get("phrase_still_there")
 	if len(h.history) == 0 {
-		return fallback // nothing said yet: the greeting is the context
+		return fallback
 	}
 
-	// Wording validated against the live model: without the caller-POV example it
-	// produced "Mes horaires — vous êtes toujours là ?", and without the explicit
-	// "rappelle le sujet" it fell back to a generic "Êtes-vous toujours présent ?".
-	instruction := "Le client s'est tu depuis plusieurs secondes. Écris UNE seule phrase courte qui rappelle " +
-		"en deux à quatre mots le sujet de SA demande (formulé de son point de vue : « vos horaires », " +
-		"« le transfert vers Marie »), puis vérifie qu'il est toujours en ligne. Forme attendue : " +
-		"« Vous me demandiez vos horaires — vous êtes toujours là ? ». Rien d'autre, aucune nouvelle question."
+	prompt := repromptPrompt
+	if h.llmClient.Docked() && h.task == nil {
+		prompt += " L'appelant est reconnu. Reprends le tutoiement ou le vouvoiement employé par l'assistant dans ses dernières réponses. Le fait d'être reconnu ne signifie pas qu'il faut tutoyer. En l'absence d'indice clair, vouvoie."
+	} else {
+		prompt += " L'appelant est inconnu : vouvoie-le toujours, même s'il tutoie l'assistant."
+	}
+	instruction := "La personne ne répond plus. Prononce maintenant la relance après ce silence."
 	if attempt > 1 {
 		instruction += " C'est la deuxième relance : encore plus brève, formulée autrement."
 	}
@@ -2047,7 +2051,7 @@ func (h *Handler) generateReprompt(ctx context.Context, cfg *config.Config, atte
 	rctx, cancel := context.WithTimeout(ctx, repromptTimeout)
 	defer cancel()
 
-	text, _, err := h.llmClient.GetResponse(rctx, h.systemPrompt(cfg), h.history, "", "", nil, instruction)
+	text, _, err := h.llmClient.GetResponse(rctx, prompt, h.history, "", "", nil, instruction)
 	if err != nil {
 		log.Printf("[%s] Re-prompt generation failed (%v) — using phrase_still_there", h.channelID, err)
 		return fallback

@@ -312,8 +312,9 @@
         <span class="ptag ptag-always">always</span> = always played at this point of the call.
         <span class="ptag ptag-fallback">fallback</span> = the LLM normally handles it; this phrase only fires as a fallback (the LLM didn't, or failure/timeout).
       </small>
-      <label>Nudge after silence <span class="ptag ptag-always">always</span>
-        <input type="text" id="cfg-phrase_still_there"></label>
+      <label>Nudge after silence <span class="ptag ptag-fallback">fallback</span>
+        <input type="text" id="cfg-phrase_still_there">
+        <small class="hint">Used before the first exchange, or if the contextual nudge cannot be generated. Generated nudges follow the agent’s tone for recognized callers and use formal address for unknown callers.</small></label>
       <label>Contact unreachable or unknown <span class="ptag ptag-always">always</span>
         <input type="text" id="cfg-phrase_unknown_contact">
         <small class="hint">%s = requested contact name.</small></label>

@@ -25,7 +25,8 @@ is bundled or deployed.
 - Blind and attended transfers, messages and an outbound call queue.
 - Agent-controlled knowledge searches with PostgreSQL and pgvector.
 - MCP tools over Streamable HTTP or legacy SSE.
-- Separate model and API URLs for incoming calls and outbound missions.
+- One shared conversation model for incoming calls, outbound missions and console
+  chats, with separate instructions for inbound and outbound calls.
 - Call history, transcripts, conversation supervision and a dark/light console.
 - Optional Prism integration: recognized callers use Prism's voice agent;
   unknown callers stay with the switchboard.
@@ -171,20 +172,24 @@ the page does not. Dictionary edits have their own Save/Cancel controls.
 
 The standalone voice selector saves immediately. Speech providers have their own
 **Save voice settings** button; **Connect** only loads available models and voices.
-SIP **Save** stores settings; **Apply** saves and reloads the trunk.
+For SIP, **Save** stores the line settings without activating them. **Apply**
+saves the settings and reloads the trunk in Asterisk.
 Saved call settings apply to new calls.
 
 ## Optional Prism integration
 
-Set `PRISM_URL` and `PRISM_TOKEN` in PrismVox, and configure Prism's `VOX_URL` /
-`VOX_API_KEY`. Both services must be reachable on a shared Docker network; keep
+Set `PRISM_URL` and `PRISM_TOKEN` in PrismVox. In Prism, set `VOX_URL` to the
+PrismVox console address and use `VOX_USER` and `VOX_PASSWORD` for its console
+credentials. Both services must be reachable on a shared Docker network; keep
 the call agent on a single network for reliable RTP addressing. When using the
 standard project name, that network is `prismvox_agentnet`.
 
 - Prism supplies the transfer directory from its user profiles.
-- Recognized callers use Prism's voice agent with their profile and scoped
-  knowledge. Voice tools remain restricted; recognition does not grant shell,
-  file, mail or calendar access.
+- Recognized callers use Prism's voice agent with their profile, scoped
+  knowledge, notes, tasks, calendar and connected mailbox. Their account
+  permissions apply. Configure accounts and mailbox rules from Settings;
+  shell, server administration, secrets, MCP and custom tools stay unavailable
+  by phone.
 - Unknown callers use PrismVox's switchboard persona and Prism's selected public
   voice knowledge collection. Configure that collection in Prism.
 - Prism relays transfers, messages and hang-up requests to PrismVox/Asterisk.
@@ -323,4 +328,4 @@ and synthetic APIs; they do not make telephone calls or paid model requests.
 
 ## License
 
-[MIT](LICENSE) — Copyright © 2026 Vincent Blazutti.
+[MIT](LICENSE).

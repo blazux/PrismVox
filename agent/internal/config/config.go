@@ -17,7 +17,7 @@ var defaults = map[string]string{
 	// one above, before a single token is generated — a colleague should not be told
 	// they have reached the switchboard. One optional %s = their name; without it
 	// the line is spoken verbatim.
-	"greeting_known": "Bonjour %s, c'est votre assistant. Que puis-je faire pour vous ?",
+	"greeting_known": "Bonjour %s, c'est l'assistant Prism. Je suis à l'écoute.",
 	"rag_enabled":    "true",
 	"mcp_enabled":    "false",
 
@@ -28,14 +28,14 @@ var defaults = map[string]string{
 	"sip_transfer_method": "bridge",
 
 	// Spoken phrases used by the call-control code (overridable via the config table).
-	"phrase_farewell":       "Merci de votre appel, au revoir !",
-	"phrase_hold":           "Je vérifie sa disponibilité, je vous mets en attente un instant.",
-	"phrase_transfer_now":   "Très bien, je vous transfère.",
-	"phrase_connecting":     "%s prend votre appel, je vous le passe.",
-	"phrase_ask_name":       "Puis-je avoir votre nom, s'il vous plaît ?",
-	"phrase_ask_reason":     "Et quel est l'objet de votre appel ?",
+	"phrase_farewell":       "Au revoir, bonne journée !",
+	"phrase_hold":           "Un instant, je vérifie sa disponibilité.",
+	"phrase_transfer_now":   "Très bien, je lance le transfert.",
+	"phrase_connecting":     "%s a accepté l'appel, je lance la mise en relation.",
+	"phrase_ask_name":       "Quel nom dois-je annoncer ?",
+	"phrase_ask_reason":     "Quel est le motif de l'appel ?",
 	"phrase_still_there":    "Êtes-vous toujours en ligne ?",
-	"phrase_not_understood": "Pardon, je n'ai pas bien entendu. Pouvez-vous répéter ?",
+	"phrase_not_understood": "Pardon, je n'ai pas bien entendu. Est-ce possible de répéter ?",
 	// Short filler played to bridge the silence when a TTS take has to be regenerated.
 	"phrase_filler":          "Un instant.",
 	"phrase_unknown_contact": "Je suis désolée, je ne peux pas joindre %s. Puis-je prendre un message ?",
