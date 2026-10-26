@@ -43,10 +43,6 @@
       <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       MCP
     </button>
-    <button onclick="showTab('contacts',this)">
-      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      Directory
-    </button>
     <button onclick="showTab('outbound',this)">
       <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/><polyline points="15 5 21 5"/><polyline points="18 2 18 8"/></svg>
       Outbound Calls
@@ -142,14 +138,15 @@
 
 <!-- ── AGENT ── -->
 <div id="tab-setup" class="tab-content">
-  <div class="subtabs">
-    <button class="active" onclick="showSubTab('sip',this)">SIP / Telephony</button>
-    <button onclick="showSubTab('agentcfg',this)">Agent</button>
-    <button onclick="showSubTab('dictionary',this)">Dictionary</button>
+  <div class="subtabs" style="flex-wrap:wrap">
+    <button class="active" onclick="showSubTab('agentcfg',this)">Agents &amp; models</button>
+    <button onclick="showSubTab('voicecfg',this)">Voice &amp; greeting</button>
+    <button onclick="showSubTab('transfers',this)">Transfers &amp; directory</button>
+    <button onclick="showSubTab('sip',this)">Phone connection</button>
   </div>
 
   <!-- ── SIP sub-tab ── -->
-  <div id="subtab-sip" class="subtab-content active">
+  <div id="subtab-sip" class="subtab-content">
     <h3>SIP Trunk / Telephony</h3>
     <p class="muted" style="margin-top:-.4rem;font-size:.8rem">
       Connection to the SBC / BroadWorks. "Save" stores the config; "Apply" pushes it
@@ -235,58 +232,65 @@
   </div>
 
   <!-- ── Agent sub-tab ── -->
-  <div id="subtab-agentcfg" class="subtab-content">
-  <h3>Agent configuration</h3>
-  <details style="margin:0 0 12px"><summary>Speech providers</summary>
-    <iframe id="speech-providers" title="Speech providers" src="/api/voice/editor" style="width:100%;height:220px;border:0;margin-top:8px"></iframe>
-  </details>
-  <form id="agent-form" onsubmit="saveConfig(event)">
+  <div id="subtab-agentcfg" class="subtab-content active">
+  <h3>Agents &amp; models</h3>
+  <p class="muted">Standalone mode: the inbound agent answers every caller. Saved changes apply to new calls.</p>
+<form id="agent-form" onsubmit="saveConfig(event)">
     <label>
-      System Prompt — inbound calls
+      Instructions — inbound calls
       <textarea id="cfg-system_prompt" rows="5"></textarea>
       <small class="hint">LLM instructions for inbound calls. No markdown, short sentences (spoken aloud).</small>
     </label>
     <label>
-      Greeting — inbound calls
-      <input type="text" id="cfg-greeting">
-      <small class="hint">Phrase spoken when an inbound call is answered.</small>
-    </label>
+        Model — inbound calls &amp; chat
+        <input type="text" id="cfg-llm_model_standard" placeholder="Model ID from your API">
+        <small class="hint">Model ID exposed by your API. Leave empty to use the deployment default.</small>
+      </label>
+
     <label>
-      System Prompt — outbound calls
+      Instructions — outbound calls
       <textarea id="cfg-outbound_system_prompt" rows="6"></textarea>
       <small class="hint">Instructions for agent-initiated calls (Outbound Calls tab). Each call's mission is appended automatically under a "Mission" section. No greeting: the opening is generated from the mission.</small>
     </label>
-    <fieldset>
-      <legend>LLM models</legend>
-      <label>
-        Model — standard (inbound calls &amp; chat)
-        <input type="text" id="cfg-llm_model_standard" placeholder="Model ID from your API">
-        <small class="hint">Small fast model: the caller's experience comes first. Alias as exposed by the LLM gateway (LiteLLM). Empty = container default.</small>
-      </label>
-      <label>
-        Model — on-call (outbound calls)
+    <label>
+        Model — outbound calls &amp; transfer recipient
         <input type="text" id="cfg-llm_model_oncall" placeholder="Model ID from your API">
-        <small class="hint">More capable model for on-call missions: the colleagues being called tolerate a slower pace.</small>
+        <small class="hint">Model ID for outbound missions and conversations with transfer recipients. Leave empty to use the deployment default.</small>
       </label>
-    </fieldset>
+
     <details style="margin-bottom:10px"><summary>Model API URLs (optional)</summary>
-      <label>Standard model API root<input type="url" id="cfg-llm_url_standard" placeholder="Empty = deployment gateway"></label>
-      <label>On-call model API root<input type="url" id="cfg-llm_url_oncall" placeholder="Empty = deployment gateway"></label>
+      <label>Inbound model API root<input type="url" id="cfg-llm_url_standard" placeholder="Empty = deployment gateway"></label>
+      <label>Outbound model API root<input type="url" id="cfg-llm_url_oncall" placeholder="Empty = deployment gateway"></label>
       <small class="hint">Include /v1. Separate endpoints receive no deployment gateway API key.</small>
     </details>
-    <label>
-      Dialog turns — attended transfer
-      <input type="number" id="cfg-transfer_dialog_turns" min="1" max="10" step="1" placeholder="3">
-      <small class="hint">Maximum exchanges with the recipient to announce the call (announcement included). The agent re-asks when the answer is ambiguous: more turns = more reliable decision, but the caller waits on hold music. Empty = 3.</small>
-    </label>
+
     <fieldset>
       <legend>Features</legend>
       <label><input type="checkbox" id="cfg-rag_enabled" role="switch"> Enable knowledge search</label>
       <label><input type="checkbox" id="cfg-mcp_enabled" role="switch"> Enable MCP tools</label>
     </fieldset>
+
+
+<details><summary>Administration chat instructions</summary>    <label>
+      Admin Chat prompt
+      <textarea id="cfg-admin_chat_prompt" rows="3"></textarea>
+      <small class="hint">Base instructions for the admin chat (Admin Chat tab).</small>
+    </label></details>
+<div class="actions"><button type="submit">Save changes</button><button type="button" class="outline" onclick="loadConfig(this.closest('form'))">Discard changes</button></div><p data-config-status role="status"></p></form></div>
+<div id="subtab-voicecfg" class="subtab-content"><h3>Voice &amp; greeting</h3>
+  <details style="margin:0 0 12px"><summary>Speech providers</summary>
+    <iframe id="speech-providers" title="Speech providers" src="/api/voice/editor" style="width:100%;height:220px;border:0;margin-top:8px"></iframe>
+  </details>
+<form id="voice-form" onsubmit="saveConfig(event)">
+    <label>
+      Greeting — inbound calls
+      <input type="text" id="cfg-greeting">
+      <small class="hint">Phrase spoken when an inbound call is answered.</small>
+    </label>
     <fieldset>
-      <legend>Receptionist voice</legend>
+      <legend>Voice — all calls</legend>
       <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+        <small class="hint">Voice selection is saved immediately.</small>
         <select id="tts-voice-select" style="margin:0;width:auto;min-width:180px" onchange="setTTSVoice(this.value)"></select>
         <button type="button" class="outline" id="tts-preview-btn" onclick="previewTTSVoice()">▶ Listen</button>
         <span id="tts-voice-status" class="muted"></span>
@@ -307,7 +311,7 @@
       <small class="hint">Record yourself reading the phrase above (5–10 s, clear voice, no background noise) — or upload a clean pre-recorded .wav — it covers varied sounds and natural intonation for better cloning. Play it back, name the voice, then add it. The change is immediate, no restart. <em>(Microphone only accessible over https or on localhost — upload a file instead if you can't switch.)</em></small>
     </fieldset>
     <fieldset>
-      <legend>Receptionist phrases</legend>
+      <legend>Spoken phrases</legend>
       <small class="hint" style="margin:0 0 .6rem;display:block">
         Phrases spoken by the code during the call flow.
         <span class="ptag ptag-always">always</span> = always played at this point of the call.
@@ -338,23 +342,7 @@
         <input type="text" id="cfg-phrase_announce">
         <small class="hint">The LLM generates the announcement while ringing; this phrase is the fallback (failure/timeout). <b>Two %s</b>: 1st = caller name, 2nd = reason for the call.</small></label>
     </fieldset>
-    <hr>
-    <label>
-      Admin Chat prompt
-      <textarea id="cfg-admin_chat_prompt" rows="3"></textarea>
-      <small class="hint">Base instructions for the admin chat (Admin Chat tab).</small>
-    </label>
-    <div class="actions">
-      <button type="submit">Save</button>
-      <button type="button" class="outline" onclick="loadConfig()">↻ Reset</button>
-    </div>
-    <p id="agent-status" style="color:var(--success);display:none;font-size:.78rem;margin-top:.4rem">✓ Saved</p>
-  </form>
-  </div>
-
-  <!-- ── Dictionary sub-tab ── -->
-  <div id="subtab-dictionary" class="subtab-content">
-  <h3>Dictionary</h3>
+<div class="actions"><button type="submit">Save changes</button><button type="button" class="outline" onclick="loadConfig(this.closest('form'))">Discard changes</button></div><p data-config-status role="status"></p></form>  <h3>Pronunciation &amp; transcription</h3>
   <p class="muted" style="margin-bottom:.75rem">Domain vocabulary shared by transcription (STT) and speech synthesis (TTS). Changes take effect on the next call — no restart. Separate terms with spaces or commas.</p>
   <form id="dict-form" onsubmit="saveDict(event)">
     <label>
@@ -378,8 +366,36 @@
       <button type="button" class="outline" id="dict-cancel-btn" style="display:none" onclick="loadDict()">Cancel</button>
     </div>
     <p id="dict-status" style="color:var(--success);display:none;font-size:.78rem;margin-top:.4rem">✓ Saved — active on the next call.</p>
-  </form>
-  </div>
+  </form></div>
+<div id="subtab-transfers" class="subtab-content"><h3>Transfers &amp; directory</h3>
+<form id="transfer-form" onsubmit="saveConfig(event)">
+    <label>
+      Dialog turns — attended transfer
+      <input type="number" id="cfg-transfer_dialog_turns" min="1" max="10" step="1" placeholder="3">
+      <small class="hint">Maximum exchanges with the recipient to announce the call (announcement included). The agent re-asks when the answer is ambiguous: more turns = more reliable decision, but the caller waits on hold music. Empty = 3.</small>
+    </label>
+<div class="actions"><button type="submit">Save changes</button><button type="button" class="outline" onclick="loadConfig(this.closest('form'))">Discard changes</button></div><p data-config-status role="status"></p></form>  <h3>Phone directory</h3>
+  <p class="muted" style="margin-bottom:.75rem">Enabled contacts are injected into the context on every call to allow transfers by name.</p>
+  <div id="contacts-list"></div>
+  <hr>
+  <details id="new-contact-details">
+    <summary>+ Add a contact</summary>
+    <form id="new-contact-form" onsubmit="createContact(event)" style="margin-top:.5rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto auto;gap:.4rem;align-items:flex-end">
+        <label style="margin:0">Name <input type="text" id="contact-name" placeholder="Jamie Taylor" required></label>
+        <label style="margin:0">Number <input type="text" id="contact-phone" placeholder="1001 or +33612…" required></label>
+        <label style="margin:0">Notes <span class="muted">(opt.)</span> <input type="text" id="contact-notes" placeholder="HR manager…"></label>
+        <label style="margin:0">Transfer
+          <select id="contact-ttype" style="padding:.28rem .4rem;font-size:.8rem">
+            <option value="blind">blind</option>
+            <option value="attended">attended</option>
+          </select>
+        </label>
+        <button type="submit" style="align-self:flex-end">Add</button>
+      </div>
+    </form>
+  </details>
+</div>
 </div>
 
 <!-- ── RAG ── -->
@@ -442,29 +458,6 @@
 </div>
 
 <!-- ── DIRECTORY ── -->
-<div id="tab-contacts" class="tab-content">
-  <h3>Phone directory</h3>
-  <p class="muted" style="margin-bottom:.75rem">Enabled contacts are injected into the context on every call to allow transfers by name.</p>
-  <div id="contacts-list"></div>
-  <hr>
-  <details id="new-contact-details">
-    <summary>+ Add a contact</summary>
-    <form id="new-contact-form" onsubmit="createContact(event)" style="margin-top:.5rem">
-      <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto auto;gap:.4rem;align-items:flex-end">
-        <label style="margin:0">Name <input type="text" id="contact-name" placeholder="Jamie Taylor" required></label>
-        <label style="margin:0">Number <input type="text" id="contact-phone" placeholder="1001 or +33612…" required></label>
-        <label style="margin:0">Notes <span class="muted">(opt.)</span> <input type="text" id="contact-notes" placeholder="HR manager…"></label>
-        <label style="margin:0">Transfer
-          <select id="contact-ttype" style="padding:.28rem .4rem;font-size:.8rem">
-            <option value="blind">blind</option>
-            <option value="attended">attended</option>
-          </select>
-        </label>
-        <button type="submit" style="align-self:flex-end">Add</button>
-      </div>
-    </form>
-  </details>
-</div>
 
 <!-- ── OUTBOUND CALLS ── -->
 <div id="tab-outbound" class="tab-content">
@@ -666,8 +659,8 @@ function showSubTab(name, btn) {
   document.getElementById('subtab-' + name).classList.add('active');
   trigger.classList.add('active');
   if (name === 'sip')       { loadSip(); loadSipStatus(); }
-  if (name === 'agentcfg')  loadConfig();
-  if (name === 'dictionary') loadDict();
+  if (name === 'voicecfg') loadTTSVoices();
+  if (name === 'transfers') loadContacts();
   if (name === 'adminchat') scrollChat();
   if (name === 'testagent') scrollAgentChat();
 }
@@ -905,7 +898,9 @@ async function loadStatus() {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
-async function loadConfig() {
+async function loadConfig(root = document) {
+  const setText = (id, value) => { const el = document.getElementById(id); if (root.contains(el)) el.value = value; };
+  const setCheck = (id, value) => { const el = document.getElementById(id); if (root.contains(el)) el.checked = value; };
   const cfg = await api('GET', '/api/config');
   setText('cfg-system_prompt',    cfg.system_prompt || '');
   setText('cfg-greeting',         cfg.greeting || '');
@@ -919,7 +914,7 @@ async function loadConfig() {
   PHRASE_KEYS.forEach(k => setText('cfg-' + k, cfg[k] || ''));
   setCheck('cfg-rag_enabled',  cfg.rag_enabled === 'true');
   setCheck('cfg-mcp_enabled',  cfg.mcp_enabled === 'true');
-  hide('agent-status');
+  root.querySelectorAll('[data-config-status]').forEach(el => el.textContent = '');
   loadTTSVoices();
 }
 
@@ -1084,23 +1079,19 @@ const PHRASE_KEYS = ['phrase_farewell','phrase_still_there','phrase_unknown_cont
 
 async function saveConfig(e) {
   e.preventDefault();
-  const values = {
-    system_prompt:    get('cfg-system_prompt'),
-    greeting:         get('cfg-greeting'),
-    outbound_system_prompt: get('cfg-outbound_system_prompt'),
-    llm_model_standard: get('cfg-llm_model_standard'),
-    llm_url_standard: get('cfg-llm_url_standard'),
-    llm_url_oncall: get('cfg-llm_url_oncall'),
-    llm_model_oncall: get('cfg-llm_model_oncall'),
-    transfer_dialog_turns: get('cfg-transfer_dialog_turns'),
-    admin_chat_prompt: get('cfg-admin_chat_prompt'),
-    rag_enabled:      String(getCheck('cfg-rag_enabled')),
-    mcp_enabled:      String(getCheck('cfg-mcp_enabled')),
-  };
-  PHRASE_KEYS.forEach(k => values[k] = get('cfg-' + k));
-  await api('PUT', '/api/config', { values });
-  show('agent-status');
-  setTimeout(() => hide('agent-status'), 2500);
+  const form = e.currentTarget;
+  const status = form.querySelector('[data-config-status]');
+  const button = form.querySelector('button[type="submit"]');
+  const values = {};
+  form.querySelectorAll('[id^="cfg-"]').forEach(el => {
+    values[el.id.slice(4)] = el.type === 'checkbox' ? String(el.checked) : el.value;
+  });
+  button.disabled = true; status.textContent = 'Saving…';
+  try {
+    await api('PUT', '/api/config', { values });
+    status.textContent = 'Saved — applies to new calls and chat requests.';
+  } catch (error) { status.textContent = 'Could not save: ' + error.message; }
+  finally { button.disabled = false; }
 }
 
 // ── RAG Collections ───────────────────────────────────────────────────────────
@@ -1835,6 +1826,7 @@ document.addEventListener('change', event => {
 updateThemeBtn();
 loadStatus();
 loadConfig();
+loadDict();
 </script>
 </body>
 </html>

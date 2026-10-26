@@ -39,7 +39,7 @@ with sync_playwright() as p:
  page.goto(os.getenv('VOX_UI_PREVIEW_URL', 'http://127.0.0.1:4891/static/index.html'))
  page.locator('#rt-total').filter(has_text='53').wait_for()
  page.screenshot(path=str(out/'overview-dark.png'),full_page=True)
- for name in ['setup','rag','mcp','contacts','outbound','logs','conversations','chat']:
+ for name in ['setup','rag','mcp','outbound','logs','conversations','chat']:
   page.locator(f'nav button[onclick*="\'{name}\'"]').click()
   page.wait_for_timeout(80)
   assert page.locator('#tab-'+name).is_visible(),name
@@ -55,7 +55,7 @@ with sync_playwright() as p:
  page.set_viewport_size({'width':390,'height':844})
  page.screenshot(path=str(out/'sip-mobile.png'),full_page=True)
  assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'mobile SIP overflow'
- page.locator('nav button[onclick*="\'contacts\'"]').click()
+ page.locator('#tab-setup button[onclick*="\'transfers\'"]').click()
  page.locator('#new-contact-details').evaluate('(e)=>e.open=true')
  assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'mobile directory overflow'
  assert not errors,errors

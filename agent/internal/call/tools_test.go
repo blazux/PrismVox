@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"phoneagent/internal/config"
-	"phoneagent/internal/llm"
 )
 
 // The echo classifier is what stands between a working switchboard and an agent
@@ -145,21 +144,5 @@ func TestBuildCallerID(t *testing.T) {
 				t.Errorf("BuildCallerID(%v) = %q, want %q", tt.cfg, got, tt.want)
 			}
 		})
-	}
-}
-
-// History is capped so a long call cannot grow the prompt without bound; the
-// window must slide (keep the newest), never truncate the newest turns.
-func TestAppendHistoryCapsAndKeepsNewest(t *testing.T) {
-	var h []llm.Message
-	for i := 0; i < maxHistory+5; i++ {
-		h = appendHistory(h, llm.Message{Role: "user", Content: string(rune('a' + i%26))})
-	}
-	if len(h) != maxHistory {
-		t.Fatalf("len(history) = %d, want %d", len(h), maxHistory)
-	}
-	last := llm.Message{Role: "user", Content: string(rune('a' + (maxHistory+4)%26))}
-	if h[len(h)-1] != last {
-		t.Errorf("newest message = %v, want %v", h[len(h)-1], last)
 	}
 }

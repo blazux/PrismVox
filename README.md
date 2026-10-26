@@ -75,12 +75,12 @@ it is separate from STT/TTS. Persistent data lives in Docker volumes.
 
 ![PrismVox speech-provider settings](docs/screenshots/speech.png)
 
-In **Configuration → Speech providers**:
+In **Settings → Voice & greeting → Speech providers**:
 
 1. Select **ElevenLabs** for recognition and synthesis.
 2. Enter your API key and click **Connect**.
 3. Choose a voice and a speech model, then **Save voice settings**.
-4. Use the voice preview in Configuration to hear the selected voice.
+4. Use the voice preview in Settings → Voice & greeting to hear the selected voice.
 
 Defaults are `scribe_v2_realtime` for recognition and `eleven_flash_v2_5` for
 synthesis, with French as the language. Change the language, agent persona,
@@ -137,13 +137,12 @@ For OpenAI-compatible services, manage voice uploads/deletion on the speech serv
 | Console page | What you configure or inspect |
 | --- | --- |
 | Overview | SIP status, active calls and aggregate call activity |
-| Configuration → Agent | Persona, greeting, knowledge/MCP switches and model URLs |
-| Configuration → Speech providers | STT, TTS, voices, language and provider credentials |
-| Configuration → SIP | Trunk, TLS/UDP transport and transfer method |
-| Configuration → Phrases / Dictionary | Spoken prompts, names and acronym pronunciation |
-| Knowledge | Collections and reference documents available for retrieval |
+| Settings → Agents & models | Inbound/outbound instructions, models and knowledge/MCP switches |
+| Settings → Voice & greeting | Greeting, voice, speech providers, spoken phrases and pronunciation |
+| Settings → Transfers & directory | Contacts, blind/attended transfer preferences and recipient dialogue limit |
+| Settings → Phone connection | Trunk, TLS/UDP transport and transfer method |
+| Knowledge Base | Collections and reference documents available for retrieval |
 | MCP | Tool servers, connection details and exposed tools |
-| Directory | Contacts and blind/attended transfer preferences |
 | Outbound calls | Missions, scheduling, attempts and outcomes |
 | Call logs / Conversations | Call history, transcripts and tool activity |
 
@@ -157,6 +156,18 @@ Incoming switchboard calls use the **standard** model. Outbound missions,
 transfer-recipient conversations and operator chat use the **on-call** model.
 Each can use a separate API URL; leaving it empty uses `OPENAI_BASE_URL`.
 Gateway credentials are not forwarded to a different model endpoint.
+
+### Saving settings
+
+In standalone mode, **Save changes** saves only the current form: agents/models,
+voice/greeting/phrases, or the transfer dialogue limit. **Discard changes** reloads
+that form's saved values. Switching settings tabs preserves unsaved edits; reloading
+the page does not. Dictionary edits have their own Save/Cancel controls.
+
+The standalone voice selector saves immediately. Speech providers have their own
+**Save voice settings** button; **Connect** only loads available models and voices.
+SIP **Save** stores settings; **Apply** saves and reloads the trunk.
+Saved call settings apply to new calls.
 
 ## Optional Prism integration
 
@@ -174,10 +185,51 @@ standard project name, that network is `prismvox_agentnet`.
 - Prism relays transfers, messages and hang-up requests to PrismVox/Asterisk.
 - The standalone console points to Prism when docked; its protected administration
   API remains available to Prism.
-- **Prism → Admin → Telephony → Conversation model** can select a dedicated phone
-  model on versions supporting that setting, while keeping the web default.
+- **Prism → Admin → Telephony → Agents & models → Conversation model — recognised callers**
+  selects the model for recognized callers. An empty selection follows the Prism
+  deployment default; the web default is unchanged. Unknown callers and outbound
+  missions have separate Vox model fields in the same section.
+
+The connected **Telephony** page groups settings into **Agents & models**,
+**Voice & greeting**, **Transfers & directories** and **Phone connection**.
+Use the Save button beside the block you edited. Voice and greetings share
+**Save voice & greeting**; the public knowledge collection selector saves
+immediately. **Save & apply** saves and reloads the SIP trunk.
 
 `PRISM_PUBLIC_URL` sets the browser-facing Prism URL when `PRISM_URL` is internal.
+
+## Conversation memory and call archives
+
+Each phone call starts a separate conversation. During a long standalone call,
+PrismVox summarizes older exchanges in the background and keeps recent messages
+verbatim. The next turns use that summary once it is ready. If summarization
+fails, the original messages remain and PrismVox retries later. Calls answered
+by Prism use Prism's own context management.
+
+The full call transcript is kept separately and saved to PostgreSQL when the
+call ends. The final summary uses both sides of that transcript and the recorded
+action outcomes. An initiated blind transfer does not confirm that the recipient
+answered; a recorded message does not imply delivery. A process crash before
+the final save can lose the in-progress transcript.
+
+Archived calls are available for supervision; they are not automatically loaded
+into future calls. Recognized callers connected to Prism can reuse their
+personal profile and relevant saved lessons, with a separate conversation per
+call. National and international caller-number formats match by their trailing
+significant digits; multiple matching approved profiles leave the caller
+unidentified. Presented caller ID is not strong authentication.
+
+In the standalone console, **Test the agent** keeps its text transcript in
+**Conversations**. **New session** starts fresh model context and preserves the
+archive. **Delete** in Conversations removes that text-session archive. Text
+context uses a recent-message window; it does not use telephone compaction.
+**Admin chat** has temporary context with recent call summaries and statistics;
+its chat memory is lost when its process restarts. The OpenAI-compatible API
+is stateless: the client supplies conversation history on each request.
+
+Standalone PrismVox uses shared administration/API credentials, not separate
+user accounts. Integrations must assign distinct session IDs to distinct
+conversations; the `contact` label does not isolate access.
 
 ## Configuration and persistent data
 

@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	maxHistory  = 40 // 20 user + 20 assistant messages = 20 full exchanges
+	maxHistory  = 40 // compact older exchanges above this live-window threshold
 	playTimeout = 60 * time.Second
 	// drainStallTimeout bounds waitCallerDrained: if the outbound RTP buffer stops
 	// draining this long (no remote address learned → nothing being sent), give up
@@ -170,6 +170,9 @@ type Handler struct {
 
 	// conversation state
 	history          []llm.Message
+	historySummary   string
+	memoryRetryAfter time.Time
+	memoryPending    chan historyCompaction
 	turns            []map[string]string // full transcript: [{role,text}, ...]
 	toolsUsed        []map[string]interface{}
 	ragUsed          bool
@@ -483,7 +486,7 @@ func (h *Handler) Run(ctx context.Context) {
 	h.turns = append(h.turns, map[string]string{"role": "agent", "text": opening})
 	if h.task != nil {
 		// Keep the opening in LLM history so the conversation flows naturally.
-		h.history = appendHistory(h.history, llm.Message{Role: "assistant", Content: opening})
+		h.history = append(h.history, llm.Message{Role: "assistant", Content: opening})
 	}
 
 	h.captureLoop(ctx, cfg)
@@ -561,13 +564,13 @@ Tu disposes des outils take_message et end_call. Pour prendre un message ou racc
 // the matching non-editable tool-usage contract is appended (see toolRules*).
 func (h *Handler) systemPrompt(cfg *config.Config) string {
 	if h.task == nil {
-		return cfg.SystemPrompt + toolRulesInbound
+		return h.withMemory(cfg.SystemPrompt + toolRulesInbound)
 	}
 	sp := cfg.Get("outbound_system_prompt") + "\n\n## Mission\n"
 	if h.task.ContactName != "" {
 		sp += "Interlocuteur à joindre : " + h.task.ContactName + ".\n"
 	}
-	return sp + h.task.Mission + toolRulesOutbound
+	return h.withMemory(sp + h.task.Mission + toolRulesOutbound)
 }
 
 // ── Media setup ────────────────────────────────────────────────────────────────
@@ -748,7 +751,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 					if err := h.playText(ctx, reprompt); err != nil {
 						log.Printf("[%s] Re-prompt play error: %v", h.channelID, err)
 					}
-					h.history = appendHistory(h.history, llm.Message{Role: "assistant", Content: reprompt})
+					h.history = append(h.history, llm.Message{Role: "assistant", Content: reprompt})
 					rtpRx.Drain()
 					continue
 				}
@@ -850,6 +853,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 			}
 		}
 
+		h.compactHistory(ctx)
 		tools := h.buildTools()
 
 		// ── 3-stage streaming pipeline ─────────────────────────────────────────
@@ -1035,7 +1039,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		}
 
 		// Add caller's turn to history now so the follow-up LLM call has full context
-		h.history = appendHistory(h.history, llm.Message{Role: "user", Content: transcript})
+		h.history = append(h.history, llm.Message{Role: "user", Content: transcript})
 
 		// If the model returned tool calls, execute them. handleToolCalls returns
 		// only the NEW text to speak — the streamed text has already been played.
@@ -1068,7 +1072,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		}
 		privacy.Logf("[%s] Response: %q", h.channelID, response)
 		h.turns = append(h.turns, map[string]string{"role": "agent", "text": response})
-		h.history = appendHistory(h.history, llm.Message{Role: "assistant", Content: response})
+		h.history = append(h.history, llm.Message{Role: "assistant", Content: response})
 
 		// LLM decided the conversation is over
 		if h.endCall {
@@ -1142,7 +1146,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 				}
 				followUp = strings.TrimSpace(followUp + " " + extra)
 			}
-			h.history = appendHistory(h.history, llm.Message{Role: "assistant", Content: followUp})
+			h.history = append(h.history, llm.Message{Role: "assistant", Content: followUp})
 			h.turns = append(h.turns, map[string]string{"role": "agent", "text": followUp})
 			if h.rtpReceiver != nil {
 				h.rtpReceiver.Drain()
@@ -1161,6 +1165,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 				break
 			}
 		}
+		h.compactHistory(ctx)
 	}
 }
 
@@ -1307,7 +1312,7 @@ func (h *Handler) handleToolCalls(
 				// reason="Demande de transfert"). Discard anything the caller did not
 				// actually say, then ask; the model is never the source of truth right
 				// before an irreversible action.
-				keptName, keptReason := sanitizeAttendedInfo(callerName, reason, userTurns(h.history))
+				keptName, keptReason := sanitizeAttendedInfo(callerName, reason, userTurns(h.callTranscript()))
 				if keptName != callerName && callerName != "" {
 					privacy.Logf("[%s] attended transfer: discarding fabricated caller_name %q", h.channelID, callerName)
 				}
@@ -1327,13 +1332,14 @@ func (h *Handler) handleToolCalls(
 					CallerName:  callerName,
 					Reason:      reason,
 				}
-				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "transfer_call", "args": args})
+				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "transfer_call", "args": args, "outcome": "queued"})
 				builtinSpoken = append(builtinSpoken, cfg.Get("phrase_hold"))
 			} else {
 				h.transferDest = ext
 				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{
-					"tool": "transfer_call",
-					"args": map[string]interface{}{"destination": ext},
+					"tool":    "transfer_call",
+					"args":    map[string]interface{}{"destination": ext},
+					"outcome": "queued",
 				})
 				builtinSpoken = append(builtinSpoken, cfg.Get("phrase_transfer_now"))
 			}
@@ -1361,7 +1367,7 @@ func (h *Handler) handleToolCalls(
 			if h.llmClient.Docked() {
 				h.llmClient.GatewayContext = append(h.llmClient.GatewayContext, "Message pour "+recipient+" noté dans le journal d'appel Vox ; personne n'est prévenu automatiquement.")
 			}
-			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "take_message", "args": args})
+			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "take_message", "args": args, "outcome": "recorded_in_call_log_not_delivered"})
 			// The message lands in the call log; nobody is paged. Don't promise a handoff.
 			builtinSpoken = append(builtinSpoken, fmt.Sprintf("J'ai bien noté votre message pour %s.", recipient))
 			log.Printf("[%s] Message saved", h.channelID)
@@ -1383,10 +1389,15 @@ func (h *Handler) handleToolCalls(
 			result, err := h.mcpMgr.CallTool(ctx, toolName, args)
 			if err != nil {
 				log.Printf("[%s] MCP tool '%s' error: %v", h.channelID, toolName, err)
+				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": toolName, "args": args, "outcome": "failed"})
 				mcpResults = append(mcpResults, fmt.Sprintf("Tool '%s': error: %v", toolName, err))
 				continue
 			}
-			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": toolName, "args": args})
+			summaryResult := []rune(result)
+			if len(summaryResult) > 2000 {
+				summaryResult = append(summaryResult[:2000], []rune("… [truncated]")...)
+			}
+			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": toolName, "args": args, "outcome": "returned", "result": string(summaryResult)})
 			shortResult := result
 			if len(shortResult) > 120 {
 				shortResult = shortResult[:120]
@@ -1459,7 +1470,14 @@ func BuildCallerID(cfg *config.Config) string {
 	return user
 }
 
-func (h *Handler) executeTransfer(ctx context.Context, cfg *config.Config, destination string) error {
+func (h *Handler) executeTransfer(ctx context.Context, cfg *config.Config, destination string) (resultErr error) {
+	defer func() {
+		outcome := "initiated"
+		if resultErr != nil {
+			outcome = "failed"
+		}
+		h.setTransferOutcome(outcome)
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1528,7 +1546,7 @@ func (h *Handler) recoverTransfer(ctx context.Context) {
 		h.llmClient.GatewayContext = append(h.llmClient.GatewayContext, "Le transfert a échoué. L'appelant est toujours en ligne.")
 	}
 	_ = h.playText(ctx, text)
-	h.history = appendHistory(h.history, llm.Message{Role: "assistant", Content: text})
+	h.history = append(h.history, llm.Message{Role: "assistant", Content: text})
 	h.turns = append(h.turns, map[string]string{"role": "agent", "text": text})
 }
 
@@ -1536,7 +1554,8 @@ func (h *Handler) executeAttendedTransfer(
 	ctx context.Context,
 	cfg *config.Config,
 	at *attendedTransferReq,
-) string {
+) (outcome string) {
+	defer func() { h.setTransferOutcome(outcome) }()
 	destination := at.Destination
 	if ctx.Err() != nil {
 		return "failed"
@@ -1714,7 +1733,7 @@ func (h *Handler) collectCallerInfo(ctx context.Context, question string) string
 	text = strings.TrimSpace(text)
 	if text != "" {
 		h.turns = append(h.turns, map[string]string{"role": "caller", "text": text})
-		h.history = appendHistory(h.history, llm.Message{Role: "user", Content: text})
+		h.history = append(h.history, llm.Message{Role: "user", Content: text})
 	}
 	return text
 }
@@ -2468,10 +2487,10 @@ func (h *Handler) finalizeLog(ctx context.Context) {
 	}
 
 	var summary *string
-	if len(h.history) > 0 {
+	if len(h.turns) > 0 {
 		// Leave time for the durable log/task writes if summarization stalls.
 		summaryCtx, summaryCancel := context.WithTimeout(ctx, 8*time.Second)
-		s, err := h.llmClient.GetCallSummary(summaryCtx, h.history, h.callerNumber, h.toolsUsed, h.ragUsed)
+		s, err := h.llmClient.GetCallSummary(summaryCtx, h.callTranscript(), h.callerNumber, h.toolsUsed, h.ragUsed, endReason)
 		summaryCancel()
 		if err != nil {
 			log.Printf("[%s] Summary error: %v", h.channelID, err)
@@ -2609,14 +2628,6 @@ func userTurns(history []llm.Message) []string {
 		}
 	}
 	return out
-}
-
-func appendHistory(history []llm.Message, msg llm.Message) []llm.Message {
-	history = append(history, msg)
-	if len(history) > maxHistory {
-		history = history[len(history)-maxHistory:]
-	}
-	return history
 }
 
 func stringFromMap(m map[string]interface{}, key string) string {
