@@ -1493,6 +1493,9 @@ function buildLogRows(row) {
 
   const toolChips = tools.map(t => {
     let label = esc(t.tool || '?');
+    if (t.args?.action) label += ` · ${esc(t.args.action)}`;
+    if (t.outcome === 'failed') label += ' · failed';
+    if (t.outcome === 'started') label += ' · no result';
     if (t.tool === 'transfer_call' && t.args?.destination) label += ` → ${esc(t.args.destination)}`;
     else if (t.args) {
       const vals = Object.values(t.args);
@@ -1500,6 +1503,14 @@ function buildLogRows(row) {
     }
     return `<span class="chip chip-tool">${label}</span>`;
   }).join(' ');
+
+  const outcomeLabel = outcome => ({started:'Result not received', returned:'Result returned', failed:'Failed', queued:'Requested', recorded_in_call_log_not_delivered:'Recorded in call log; not sent'}[outcome] || outcome);
+  const toolDetails = tools.filter(t => t.args || t.result !== undefined || t.outcome).map(t => `
+    <details style="margin-top:.5rem">
+      <summary style="cursor:pointer;font-size:.78rem">${esc(t.tool || '?')}${t.args?.action ? ` · ${esc(t.args.action)}` : ''}${t.outcome ? ` — ${esc(outcomeLabel(t.outcome))}` : ''}</summary>
+      ${t.args ? `<div class="detail-label" style="margin-top:.4rem">Arguments</div><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.72rem">${esc(JSON.stringify(t.args, null, 2))}</pre>` : ''}
+      ${t.result !== undefined ? `<div class="detail-label">Result${t.result_truncated ? ' (truncated)' : ''}</div><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.72rem">${esc(String(t.result))}</pre>` : ''}
+    </details>`).join('');
 
   const detailRow = `
     <tr id="log-detail-${row.id}" class="log-detail" style="display:none">
@@ -1533,6 +1544,7 @@ function buildLogRows(row) {
                 ${ragUsed ? '<span class="chip chip-rag">✓ RAG</span>' : ''}
                 ${toolChips}
               </div>
+              ${toolDetails}
             </div>` : ''}
         </div>
       </td>

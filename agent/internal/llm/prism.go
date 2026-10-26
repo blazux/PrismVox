@@ -190,12 +190,20 @@ func (c *Client) streamPrism(ctx context.Context, userText string, sentCh chan<-
 			Content string                 `json:"content"`
 			Tool    string                 `json:"tool"`
 			Args    map[string]interface{} `json:"args"`
+			ID      string                 `json:"id"`
+			Input   json.RawMessage        `json:"input"`
+			Output  string                 `json:"output"`
+			IsError bool                   `json:"is_error"`
 		}
 		if json.Unmarshal(data, &ev) != nil {
 			continue
 		}
 
 		switch ev.Type {
+		case "tool_use", "tool_result":
+			var input map[string]interface{}
+			_ = json.Unmarshal(ev.Input, &input)
+			observeToolTrace(ctx, ToolTrace{Type: ev.Type, ID: ev.ID, Tool: ev.Tool, Input: input, Output: ev.Output, IsError: ev.IsError})
 		case "stream":
 			pending.WriteString(ev.Content)
 			classify()

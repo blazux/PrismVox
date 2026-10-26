@@ -120,3 +120,95 @@ func TestPrismCancelledTurnDoesNotReleaseQueuedActions(t *testing.T) {
 		t.Fatal("cancelled hangup must not be executed")
 	}
 }
+
+func TestPrismReceivesSpokenOpeningOnlyOnFirstCompletedTurn(t *testing.T) {
+	requests := make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var msg map[string]any
+		if conn.ReadJSON(&msg) != nil {
+			return
+		}
+		requests <- msg
+		conn.WriteJSON(map[string]string{"type": "stream", "content": "D'accord."})
+		conn.WriteJSON(map[string]string{"type": "turn_complete"})
+	}))
+	defer server.Close()
+	c := New()
+	c.PrismURL = server.URL
+	c.CallerKnown = true
+	c.GatewayContext = []string{"Accueil déjà prononcé : Bonjour Alice, comment ça va ?"}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for turn := 0; turn < 2; turn++ {
+		sentences, calls, errs := c.StreamResponse(ctx, "", nil, "", "", nil, "Très bien.")
+		for range sentences {
+		}
+		for range calls {
+		}
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		request := <-requests
+		facts, _ := request["gateway_context"].([]any)
+		if turn == 0 && (len(facts) != 1 || !strings.Contains(facts[0].(string), "Bonjour Alice, comment ça va ?")) {
+			t.Fatal("first caller turn lost the greeting", request)
+		}
+		if turn == 1 && len(facts) != 0 {
+			t.Fatal("greeting repeated in the next caller turn")
+		}
+	}
+}
+
+func TestPrismInternalToolTraceDoesNotBecomeSpeechOrLocalExecution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var msg map[string]any
+		if conn.ReadJSON(&msg) != nil {
+			return
+		}
+		for _, event := range []map[string]any{
+			{"type": "tool_use", "id": "calendar-1", "tool": "calendar", "input": map[string]string{"action": "add"}},
+			{"type": "tool_result", "id": "calendar-1", "output": "fixture failure", "is_error": true},
+			{"type": "stream", "content": "Je n'ai pas pu ajouter le rendez-vous."},
+			{"type": "turn_complete"},
+		} {
+			conn.WriteJSON(event)
+		}
+	}))
+	defer server.Close()
+	var trace []ToolTrace
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = WithToolTrace(ctx, func(event ToolTrace) { trace = append(trace, event) })
+	c := New()
+	c.PrismURL = server.URL
+	c.CallerKnown = true
+	sentences, calls, errs := c.StreamResponse(ctx, "", nil, "", "", nil, "Ajoute le rendez-vous.")
+	var spoken strings.Builder
+	for text := range sentences {
+		spoken.WriteString(text)
+	}
+	for local := range calls {
+		if len(local) > 0 {
+			t.Fatal("internal Prism tool would execute twice")
+		}
+	}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if spoken.String() != "Je n'ai pas pu ajouter le rendez-vous." {
+		t.Fatal("trace was spoken", spoken.String())
+	}
+	if len(trace) != 2 || trace[0].Input["action"] != "add" || trace[1].ID != "calendar-1" || !trace[1].IsError || trace[1].Output != "fixture failure" {
+		t.Fatal("lost tool trace", trace)
+	}
+}

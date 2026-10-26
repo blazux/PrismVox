@@ -181,10 +181,12 @@ type Handler struct {
 
 	// fillerWav is a pre-synthesized short phrase played to bridge the silence while
 	// a slow/regenerating TTS take is in flight.
-	fillerWav []byte
-	fillerMu  sync.Mutex
-	logID     int64
-	message   *string
+	fillerWav   []byte
+	waitCueWav  []byte
+	responseCue *waitingCue
+	fillerMu    sync.Mutex
+	logID       int64
+	message     *string
 
 	// transfer state
 	transferDest     string
@@ -388,6 +390,7 @@ func (h *Handler) Run(ctx context.Context) {
 		return
 	}
 	h.ttsClient.Configure(settings)
+	h.loadWaitCue()
 	h.groupShortSpeech = settings.TTSProvider == "elevenlabs"
 	h.sttClient.Configure(settings)
 	h.sttClient.Hotwords = cfg.Get("whisper_hotwords")
@@ -475,14 +478,27 @@ func (h *Handler) Run(ctx context.Context) {
 	}
 	if err := h.playText(ctx, opening); err != nil {
 		log.Printf("[%s] Greeting play error: %v", h.channelID, err)
-	}
-	h.turns = append(h.turns, map[string]string{"role": "agent", "text": opening})
-	if h.task != nil {
-		// Keep the opening in LLM history so the conversation flows naturally.
-		h.history = append(h.history, llm.Message{Role: "assistant", Content: opening})
+	} else {
+		h.rememberOpening(opening)
 	}
 
 	h.captureLoop(ctx, cfg)
+}
+
+// rememberOpening records what the caller actually heard, including inbound
+// greetings spoken before any model runs. Prism owns its own history, so carry
+// this fact with the first caller turn using the existing gateway context.
+func (h *Handler) rememberOpening(opening string) {
+	opening = strings.TrimSpace(opening)
+	if opening == "" {
+		return
+	}
+	h.turns = append(h.turns, map[string]string{"role": "agent", "text": opening})
+	h.history = append(h.history, llm.Message{Role: "assistant", Content: opening})
+	if h.task == nil && h.llmClient != nil && h.llmClient.Docked() {
+		h.llmClient.GatewayContext = append(h.llmClient.GatewayContext,
+			fmt.Sprintf("Accueil déjà prononcé par l'assistant avant la première réponse de l'appelant : %q.", opening))
+	}
 }
 
 // outboundOpening asks the LLM for a mission-specific first sentence.
@@ -679,10 +695,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		}
 	}()
 
-	// Filler disabled: it was a Chatterbox-era bridge for slow/regenerated takes, but
-	// Kyutai's normal ~1.5s/sentence synthesis trips the 1.5s threshold on every
-	// sentence → fillers ("un instant"…) got injected mid-response. Without it,
-	// synthesizeFiller just returns the real take (no filler is ever queued).
+	// Waiting audio is limited to the initial silence of a response.
 
 	silentPrompts := 0
 	emptyReprompts := 0
@@ -860,11 +873,18 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		// Stages 2+3 overlap so playback of sentence N starts while N+1 is being synthesized.
 
 		tLLM := time.Now()
+		h.responseCue = nil
+		if len(h.waitCueWav) > 0 {
+			h.responseCue = &waitingCue{wav: h.waitCueWav, started: tLLM, delay: 2 * time.Second}
+		}
+
 		var firstPacket <-chan time.Time
 		if h.rtpReceiver != nil {
 			firstPacket = h.rtpReceiver.ObserveNextPacket()
 		}
 		turnCtx, cancelTurn := context.WithCancel(ctx)
+		remoteTools := prismToolLog{session: h.llmClient.SessionID}
+		turnCtx = llm.WithToolTrace(turnCtx, remoteTools.observe)
 		sentCh, toolsCh, llmErrCh := h.llmClient.StreamResponse(
 			turnCtx,
 			h.systemPrompt(cfg),
@@ -931,7 +951,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		playDone := make(chan struct{})
 		go func() {
 			defer close(playDone)
-			h.playQueued(playCtx, h.channelID, wavCh)
+			h.playQueued(playCtx, h.channelID, h.withWaitCue(playCtx, wavCh))
 		}()
 
 		// Drop audio buffered while we were busy (STT + LLM + first synth) so the
@@ -1026,6 +1046,12 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 			log.Printf("[%s] LLM stream error: %v", h.channelID, err)
 		}
 		cancelTurn()
+		h.toolsUsed = append(h.toolsUsed, remoteTools.entries...)
+		for _, entry := range remoteTools.entries {
+			if entry["tool"] == "rag_search" {
+				h.ragUsed = true
+			}
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -1070,6 +1096,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		privacy.Logf("[%s] Response: %q", h.channelID, response)
 		h.turns = append(h.turns, map[string]string{"role": "agent", "text": response})
 		h.history = append(h.history, llm.Message{Role: "assistant", Content: response})
+		h.responseCue = nil
 
 		// LLM decided the conversation is over
 		if h.endCall {
@@ -1206,6 +1233,14 @@ func (h *Handler) handleToolCalls(
 	if len(toolCalls) == 0 {
 		return "", nil
 	}
+	eligible := false
+	for _, tc := range toolCalls {
+		if !tc.Relayed && toolCueEligible(tc.Name) {
+			eligible = true
+			break
+		}
+	}
+	defer h.localWaitCue(ctx, eligible)()
 
 	// builtinSpoken collects spoken phrases for built-in tools (no LLM needed).
 	// mcpResults collects raw outputs for tools whose outcome the LLM must phrase.
@@ -2108,7 +2143,7 @@ func (h *Handler) playText(ctx context.Context, text string) error {
 		}
 		result <- nil
 	}()
-	h.playQueued(pctx, h.channelID, chunks)
+	h.playQueued(pctx, h.channelID, h.withWaitCue(pctx, chunks))
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

@@ -257,6 +257,7 @@ Saved database values take precedence over their bootstrap values.
 | `AGENT_API_KEY` | Bearer authentication for text-agent/API clients |
 | `SIP_*` | Initial trunk configuration and TLS verification |
 | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` | Language-model gateway |
+| `WAIT_CUE_WAV` | Optional prerecorded WAV path inside the agent container; played once after two seconds of initial response silence |
 | `STT_PROVIDER`, `TTS_PROVIDER` | `elevenlabs`, `openai` or legacy `service` |
 | `ELEVENLABS_*` | ElevenLabs credentials, voice, models, language and stability |
 | `STT_URL`, `TTS_URL`, `STT_MODEL`, `TTS_MODEL`, `TTS_VOICE` | External speech APIs |

@@ -42,6 +42,7 @@ services:
       - LOG_SENSITIVE_DATA=${LOG_SENSITIVE_DATA:-false}
       - APP_HOST=agent
       - SOUNDS_DIR=/sounds
+      - WAIT_CUE_WAV=${WAIT_CUE_WAV:-}
       # Barge-in sustain threshold (ms of voiced speech). Raised from 800 to reduce
       # self-interruption from acoustic echo (agent hearing its own playback) —
       # echo accrues voiced frames continuously, so it reaches any threshold on a
