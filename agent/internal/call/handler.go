@@ -372,6 +372,11 @@ func (h *Handler) Run(ctx context.Context) {
 			log.Printf("[%s] InsertCallLog error: %v", h.channelID, err)
 		} else {
 			h.logID = id
+			if h.task != nil {
+				if err := db.SetCallAudience(ctx, h.pool, id, h.task.Audience, h.task.PrismInstance, h.task.OwnerID); err != nil {
+					log.Printf("[%s] task audience: %v", h.channelID, err)
+				}
+			}
 		}
 	}
 
@@ -446,6 +451,21 @@ func (h *Handler) Run(ctx context.Context) {
 		who := h.llmClient.LookupCaller(ctx, h.callerNumber)
 		h.llmClient.CallerKnown = who.Known
 		h.callerName = who.Name
+		if h.pool != nil && h.logID != 0 {
+			audience := "unclassified"
+			if !h.llmClient.Linked() {
+				audience = "standard"
+			} else if who.PrismInstance != "" {
+				if who.Known && who.OwnerID != nil {
+					audience = "personal"
+				} else if !who.Known {
+					audience = "standard"
+				}
+			}
+			if err := db.SetCallAudience(ctx, h.pool, h.logID, audience, who.PrismInstance, who.OwnerID); err != nil {
+				log.Printf("[%s] call audience: %v", h.channelID, err)
+			}
+		}
 		if who.Known {
 			log.Printf("[%s] Caller recognised by Prism", h.channelID)
 		}

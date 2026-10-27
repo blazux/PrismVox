@@ -72,7 +72,9 @@ type Caller struct {
 	// Known reports whether the number matches an approved Prism user. It is not
 	// authentication — caller ID is trivially forged. It selects a greeting and a
 	// brain, never a permission.
-	Known bool `json:"known"`
+	Known         bool   `json:"known"`
+	OwnerID       *int64 `json:"owner_id"`
+	PrismInstance string `json:"prism_instance"`
 	// Name is the display name to greet them with. Empty when unknown.
 	Name string `json:"name"`
 }

@@ -161,3 +161,11 @@ IMPORTANT : pour toute action (prise de message, fin d''appel), tu dois APPELER 
     ('phrase_filler',          'Un instant.'),
     ('phrase_unknown_contact', 'Je suis désolée, je ne peux pas joindre %s. Puis-je prendre un message ?'),
     ('phrase_announce',        'Bonjour, j''ai %s en ligne pour vous, à propos de : %s. Souhaitez-vous prendre l''appel ?');
+
+-- Archive audience (legacy rows remain administrator-only).
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS owner_id BIGINT;
+ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
+ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
+ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS owner_id BIGINT;

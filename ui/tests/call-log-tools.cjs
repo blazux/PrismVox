@@ -1,21 +1,22 @@
-const fs=require('node:fs');
-const vm=require('node:vm');
-const assert=require('node:assert/strict');
-const src=fs.readFileSync(require('node:path').join(__dirname,'../app/static/index.html'),'utf8');
-const context={Date,JSON,Array,Object,String,fmtDuration:()=>'',directionBadge:()=>'',reasonBadge:()=>''};
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(require('node:path').join(__dirname,'../app/static/supervision.html'), 'utf8');
+class Element {
+  constructor(tag) { this.tag=tag; this.children=[]; this.textContent=''; }
+  append(...children) { this.children.push(...children); }
+  set innerHTML(value) { throw Error('Tool data must be rendered as text'); }
+}
+const context = { document:{createElement:tag=>new Element(tag)}, t:{args:'Arguments',result:'Result',failed:'Failed',noResult:'Result not received',returned:'Result returned',truncated:'truncated'}, JSON, String };
 vm.createContext(context);
-vm.runInContext(src.split('\n').find(line=>line.startsWith('function esc(s)'))+'\n'+src.slice(src.indexOf('function buildLogRows(row)'),src.indexOf('function toggleLog(id)')),context);
-const html=context.buildLogRows({id:1,started_at:'2026-10-26T18:00:00Z',tools_used:[
- {tool:'calendar',args:{action:'add',title:'<img src=x onerror=evil()>'},outcome:'failed',result:'<script>evil()</script>'},
- {tool:'note',outcome:'started',args:{action:'list'}},
- {tool:'email',outcome:'returned',result:'Long result',result_truncated:true},
- {tool:'end_call'},
-]});
-assert.ok(html.includes('calendar · add · failed'));
-assert.ok(html.includes('Result not received'));
-assert.ok(html.includes('Result (truncated)'));
-assert.ok(html.includes('&lt;img'));
-assert.ok(html.includes('&lt;script&gt;'));
-assert.ok(!html.includes('<img')&&!html.includes('<script>'));
-assert.equal((html.match(/<details /g)||[]).length,3);
-console.log('Call tool traces show actions, arguments, results and incomplete/failed status; content is escaped.');
+vm.runInContext(source.slice(source.indexOf('function showTools('),source.indexOf('function addMessage(')), context);
+test('supervision traces preserve results, failures and text safety',()=>{
+ const root = new Element('div');
+ context.showTools(root,[{name:'calendar',arguments:{action:'add',title:'<img src=x>'},is_error:true,result:'<script>bad()</script>'},{name:'note',outcome:'started',arguments:{},result:'fixture',result_truncated:true}]);
+ assert.equal(root.children[0].children[0].textContent,'calendar · add · Failed');
+ assert.ok(root.children[0].children[1].textContent.includes('<img src=x>'));
+ assert.ok(root.children[0].children[1].textContent.includes('<script>bad()</script>'));
+ assert.equal(root.children[1].children[0].textContent,'note · Result not received');
+ assert.ok(root.children[1].children[1].textContent.includes('Result (truncated)'));
+});

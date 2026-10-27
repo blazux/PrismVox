@@ -178,6 +178,12 @@ Saved call settings apply to new calls.
 
 ## Optional Prism integration
 
+Both personal and multi-user Prism deployments are supported. In personal mode,
+set the owner’s number in **Settings → Profile → Phone**. Calls from that number
+use their personal assistant and existing organizer/mailbox; other callers reach
+the standard. No Prism user account or multi-user conversion is required.
+
+
 Set `PRISM_URL` and `PRISM_TOKEN` in PrismVox. In Prism, set `VOX_URL` to the
 PrismVox console address and use `VOX_USER` and `VOX_PASSWORD` for its console
 credentials. Both services must be reachable on a shared Docker network; keep
@@ -230,12 +236,31 @@ call. National and international caller-number formats match by their trailing
 significant digits; multiple matching approved profiles leave the caller
 unidentified. Presented caller ID is not strong authentication.
 
+**Supervision** consults the complete authorized archive on demand. Ask about a
+period, a caller or outbound activity without selecting a call window first.
+The agent uses one paginated archive-reading tool; results include the exact
+matching total. Transcripts and tool results are fetched by call ID. Broad content
+analyses may require several reads; incomplete coverage must be stated.
+
+Supervision conversations and tool traces persist across process restarts. A
+bounded recent window and a retained handoff keep model context small. **Agent
+context → Lighten context** preserves the full conversation archive. **Calls**
+provides manual number, period, direction and text filters.
+
+Connected Prism exposes a **PrismVox** workspace. A global administrator selects
+existing groups under **Access**. Each authorized group has its own supervision
+conversation and sees the standard’s calls. Recognized callers’ private calls
+remain owner-scoped. Outbound tasks retain their initiating owner or standard
+scope. Installation IDs prevent reusing another Prism installation’s user IDs.
+Older records without audience metadata remain in the private **Administrator
+archive**; no ownership is guessed from historical phone numbers. In personal
+mode the owner sees standard calls and their own recognized calls.
+
 In the standalone console, **Test the agent** keeps its text transcript in
 **Conversations**. **New session** starts fresh model context and preserves the
 archive. **Delete** in Conversations removes that text-session archive. Text
 context uses a recent-message window; it does not use telephone compaction.
-**Admin chat** has temporary context with recent call summaries and statistics;
-its chat memory is lost when its process restarts. The OpenAI-compatible API
+The OpenAI-compatible API
 is stateless: the client supplies conversation history on each request.
 
 Standalone PrismVox uses shared administration/API credentials, not separate

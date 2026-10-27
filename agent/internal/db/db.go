@@ -40,6 +40,9 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 		pingErr = pool.Ping(pingCtx)
 		cancel()
 		if pingErr == nil {
+			if _, err := pool.Exec(ctx, ownershipMigration); err != nil {
+				return pool, fmt.Errorf("archive ownership migration: %w", err)
+			}
 			return pool, nil
 		}
 		log.Printf("db: PostgreSQL not ready yet (attempt %d/%d): %v", i, attempts, pingErr)
@@ -74,12 +77,15 @@ func InsertCallLog(ctx context.Context, pool *pgxpool.Pool, channelID, callerNum
 
 // CallTask is one outbound-call job claimed from the call_tasks queue.
 type CallTask struct {
-	ID          int64
-	PhoneNumber string
-	ContactName string
-	Mission     string
-	Attempts    int
-	MaxAttempts int
+	ID            int64
+	PhoneNumber   string
+	ContactName   string
+	Mission       string
+	Attempts      int
+	MaxAttempts   int
+	Audience      string
+	PrismInstance string
+	OwnerID       *int64
 }
 
 // ClaimNextCallTask atomically claims the next due pending task: it flips the
@@ -97,8 +103,8 @@ func ClaimNextCallTask(ctx context.Context, pool *pgxpool.Pool) (*CallTask, erro
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED
 		)
-		RETURNING id, phone_number, contact_name, mission, attempts, max_attempts`,
-	).Scan(&t.ID, &t.PhoneNumber, &contactName, &t.Mission, &t.Attempts, &t.MaxAttempts)
+		RETURNING id, phone_number, contact_name, mission, attempts, max_attempts, audience, prism_instance, owner_id`,
+	).Scan(&t.ID, &t.PhoneNumber, &contactName, &t.Mission, &t.Attempts, &t.MaxAttempts, &t.Audience, &t.PrismInstance, &t.OwnerID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -212,5 +218,18 @@ func FinalizeCallLog(
 		 WHERE id=$7`,
 		endReason, string(toolsJSON), ragUsed, summary, message, string(turnsJSON), id,
 	)
+	return err
+}
+
+const ownershipMigration = `
+ ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
+ ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
+ ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS owner_id BIGINT;
+ ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
+ ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
+ ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS owner_id BIGINT;`
+
+func SetCallAudience(ctx context.Context, pool *pgxpool.Pool, id int64, audience, instance string, owner *int64) error {
+	_, err := pool.Exec(ctx, `UPDATE call_logs SET audience=$2,prism_instance=$3,owner_id=$4 WHERE id=$1`, id, audience, instance, owner)
 	return err
 }
