@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ .
 
-# Outside /app on purpose: docker-compose bind-mounts ./ui/app over /app at
-# runtime for live-editing, which would otherwise shadow this script.
+# Keep the entrypoint outside /app so the optional development bind mount
+# can replace the console sources without hiding the startup script.
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

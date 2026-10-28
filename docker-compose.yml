@@ -1,5 +1,6 @@
 services:
   asterisk:
+    image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-asterisk:${PRISMVOX_TAG:-unstable}
     build: ./asterisk
     ports:
       - "5060:5060/udp"
@@ -30,6 +31,7 @@ services:
     restart: unless-stopped
 
   agent:
+    image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-agent:${PRISMVOX_TAG:-unstable}
     build: ./agent
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -119,6 +121,7 @@ services:
     restart: unless-stopped
 
   embeddings:
+    image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-embeddings:${PRISMVOX_TAG:-unstable}
     build: ./embeddings
     environment:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
@@ -133,6 +136,7 @@ services:
       start_period: 30s
 
   ui:
+    image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-ui:${PRISMVOX_TAG:-unstable}
     build: ./ui
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -144,7 +148,6 @@ services:
       # on first boot by docker-entrypoint.sh, persisted in the ui_certs volume.
       - "${UI_BIND:-127.0.0.1}:7861:7861"
     volumes:
-      - ./ui/app:/app
       # Shared with asterisk: the UI re-renders pjsip_trunk.conf here, then reloads PJSIP via ARI
       - asterisk_dynamic:/asterisk-dynamic
       - ui_certs:/certs

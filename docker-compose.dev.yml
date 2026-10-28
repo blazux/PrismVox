@@ -1,0 +1,6 @@
+# Optional source bind mount for live editing the console.
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  ui:
+    volumes:
+      - ./ui/app:/app

@@ -59,7 +59,8 @@ Edit `.env`:
 3. Set `AGENT_API_KEY` if you use the text agent or OpenAI-compatible API.
 
 ```sh
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 ```
 
 Open **http://localhost:7860** and sign in using `UI_USER` / `UI_PASSWORD`.
@@ -69,8 +70,66 @@ a trusted HTTPS reverse proxy; `UI_BIND` controls the published bind address.
 Browser microphone access requires HTTPS or localhost.
 
 The stack starts Asterisk, the Go call agent, the console, PostgreSQL/pgvector
-and a knowledge-embedding service. The embedding model downloads on first startup;
-it is separate from STT/TTS. Persistent data lives in Docker volumes.
+and a knowledge-embedding service. The default embedding model is included in its
+image; a different `EMBEDDING_MODEL` downloads on first use. It is separate from
+STT/TTS. Persistent data lives in Docker volumes.
+
+### Docker images and updates
+
+`PRISMVOX_TAG=unstable` follows builds from `main`. Use `latest` for the most recent
+versioned release, or a version tag such as `v1.0.0` to pin a release. Set the same
+tag for all four services through `.env`; `DOCKERHUB_NAMESPACE` defaults to `blazux`.
+
+| Service | Docker Hub image |
+| --- | --- |
+| Call agent | `blazux/prismvox-agent` |
+| Console | `blazux/prismvox-ui` |
+| SIP server | `blazux/prismvox-asterisk` |
+| Knowledge embeddings | `blazux/prismvox-embeddings` |
+
+To update, retrieve the current Compose files with `git pull`, then run:
+
+```sh
+docker compose pull
+docker compose up -d --no-build
+```
+
+Named volumes retain the database, encryption key, certificates and audio files.
+The console runs from its image; an existing `./ui/app:/app` bind mount in a local
+override must be removed to use the published console code.
+
+To build from source, run `docker compose up -d --build`. For live console edits,
+add the development override:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+### Publishing images
+
+The GitHub Actions workflow tests the call agent and console with a disposable
+PostgreSQL database before building all four images for `linux/amd64` and
+`linux/arm64`. Pushes to `main` publish `unstable`; tags beginning with `v` publish
+that tag and `latest`. Pull requests run tests without publishing. The workflow
+can also be started manually from **Actions → Build & Push Docker images**.
+
+In the PrismVox repository, add these Actions secrets under
+**Settings → Secrets and variables → Actions**:
+
+- `DOCKERHUB_USERNAME`: the Docker Hub account used for publication.
+- `DOCKERHUB_TOKEN`: a Docker Hub access token with write permission for the four
+  image repositories.
+
+These are the same secret names used by Prism. Configure them for PrismVox too,
+or grant this repository access to the corresponding organization secrets.
+
+To generate the token, sign in to [Docker Home](https://app.docker.com/), open
+**Account settings → Personal access tokens → Generate new token**, enter a
+description such as `GitHub PrismVox`, and grant repository read/write access.
+Copy the generated token; Docker displays its value only once. On GitHub, click
+**New repository secret**, enter `DOCKERHUB_TOKEN` in **Name**, paste the copied
+token into **Secret**, then click **Add secret**. Repeat with
+`DOCKERHUB_USERNAME` as **Name** and your Docker Hub login as **Secret**.
 
 ### Configure ElevenLabs
 
