@@ -93,47 +93,30 @@ services:
       - STT_MODEL=${STT_MODEL:-}
       - TTS_MODEL=${TTS_MODEL:-}
       - TTS_VOICE=${TTS_VOICE:-}
-      - EMBEDDINGS_URL=http://embeddings:8002
+      # Optional external embedding API; saved Knowledge Base settings take precedence.
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - RAG_TOP_K=${RAG_TOP_K:-5}
       - SIP_DOMAIN=${SIP_DOMAIN}
       - DATABASE_URL=postgresql://phoneagent:${DB_PASS:-change_me}@db:5432/phoneagent
       # On a network with an outbound proxy (e.g. Squid), it must not swallow
-      # internal Docker-network calls (agent → tts/stt/embeddings/asterisk) —
+      # internal Docker-network calls (agent → tts/stt/asterisk) —
       # observed as a bare Squid 503 on the TTS/STT call, nothing in the
       # agent's own logs pointing at the proxy. Prepends onto whatever
       # HTTP(S)_PROXY/NO_PROXY the host/daemon already injects.
-      - NO_PROXY=tts,stt,asterisk,embeddings,db,localhost,127.0.0.1,${NO_PROXY:-}
-      - no_proxy=tts,stt,asterisk,embeddings,db,localhost,127.0.0.1,${no_proxy:-}
+      - NO_PROXY=tts,stt,asterisk,db,localhost,127.0.0.1,${NO_PROXY:-}
+      - no_proxy=tts,stt,asterisk,db,localhost,127.0.0.1,${no_proxy:-}
     volumes:
       - sounds:/sounds
       - secrets:/var/lib/prismvox:ro
     depends_on:
       db:
         condition: service_healthy
-      embeddings:
-        condition: service_healthy
-    # Single-homed on purpose: the agent pre-resolves APP_HOST to an IP for
-    # Asterisk's ExternalMedia RTP target. A second network would make "agent"
-    # resolve to the wrong IP and silently kill all inbound audio. Prism joins
-    # THIS network instead (see the Prism compose) — never the reverse.
+    # Keep the agent on one network for Asterisk's ExternalMedia RTP target.
     networks:
       - agentnet
     restart: unless-stopped
-
-  embeddings:
-    image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-embeddings:${PRISMVOX_TAG:-unstable}
-    build: ./embeddings
-    environment:
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
-    networks:
-      - agentnet
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8002/health', timeout=3)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
 
   ui:
     image: ${DOCKERHUB_NAMESPACE:-blazux}/prismvox-ui:${PRISMVOX_TAG:-unstable}
@@ -198,7 +181,10 @@ services:
       - STT_MODEL=${STT_MODEL:-}
       - TTS_MODEL=${TTS_MODEL:-}
       - TTS_VOICE=${TTS_VOICE:-}
-      - EMBEDDINGS_URL=http://embeddings:8002
+      # Optional external embedding API; saved Knowledge Base settings take precedence.
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - ARI_URL=http://asterisk:8088
       - ARI_USER=${ARI_USER:-phoneagent}
       - ARI_PASS=${ARI_PASS:-change_me}
@@ -218,8 +204,8 @@ services:
       - TTS_SPELL_WORDS=${TTS_SPELL_WORDS:-}
       - TTS_SPELL_EXCEPTIONS=${TTS_SPELL_EXCEPTIONS:-OK}
       # Same proxy gotcha as the agent service — see its NO_PROXY comment above.
-      - NO_PROXY=tts,stt,asterisk,embeddings,db,localhost,127.0.0.1,${NO_PROXY:-}
-      - no_proxy=tts,stt,asterisk,embeddings,db,localhost,127.0.0.1,${no_proxy:-}
+      - NO_PROXY=tts,stt,asterisk,db,localhost,127.0.0.1,${NO_PROXY:-}
+      - no_proxy=tts,stt,asterisk,db,localhost,127.0.0.1,${no_proxy:-}
     depends_on:
       db:
         condition: service_healthy

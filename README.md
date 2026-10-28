@@ -38,6 +38,9 @@ is bundled or deployed.
 - An OpenAI-compatible language model API with streaming and tool calling.
 - An ElevenLabs account with Speech to Text and Text to Speech permissions.
   Models Read and Voices Read allow the console to load its catalogues.
+- An OpenAI-compatible embedding API for semantic search in the standalone
+  knowledge base. Ollama and vLLM can provide this API; configure its URL and
+  model in Knowledge Base. Connected phone calls use Prism's knowledge sources.
 - No GPU is required when your model and speech providers run elsewhere.
 
 ## Quick start
@@ -69,23 +72,22 @@ Both ports bind to localhost by default. For remote use, put the console behind
 a trusted HTTPS reverse proxy; `UI_BIND` controls the published bind address.
 Browser microphone access requires HTTPS or localhost.
 
-The stack starts Asterisk, the Go call agent, the console, PostgreSQL/pgvector
-and a knowledge-embedding service. The default embedding model is included in its
-image; a different `EMBEDDING_MODEL` downloads on first use. It is separate from
-STT/TTS. Persistent data lives in Docker volumes.
+The stack starts Asterisk, the Go call agent, the console and PostgreSQL/pgvector,
+and uses your configured model, speech and embedding APIs. Persistent data lives
+in Docker volumes. Embeddings for the standalone knowledge base are configured
+from **Knowledge Base → Embedding provider**.
 
 ### Docker images and updates
 
 `PRISMVOX_TAG=unstable` follows builds from `main`. Use `latest` for the most recent
 versioned release, or a version tag such as `v1.0.0` to pin a release. Set the same
-tag for all four services through `.env`; `DOCKERHUB_NAMESPACE` defaults to `blazux`.
+tag for all three PrismVox images through `.env`; `DOCKERHUB_NAMESPACE` defaults to `blazux`.
 
 | Service | Docker Hub image |
 | --- | --- |
 | Call agent | `blazux/prismvox-agent` |
 | Console | `blazux/prismvox-ui` |
 | SIP server | `blazux/prismvox-asterisk` |
-| Knowledge embeddings | `blazux/prismvox-embeddings` |
 
 To update, retrieve the current Compose files with `git pull`, then run:
 
@@ -108,7 +110,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ### Publishing images
 
 The GitHub Actions workflow tests the call agent and console with a disposable
-PostgreSQL database before building all four images for `linux/amd64` and
+PostgreSQL database before building all three images for `linux/amd64` and
 `linux/arm64`. Pushes to `main` publish `unstable`; tags beginning with `v` publish
 that tag and `latest`. Pull requests run tests without publishing. The workflow
 can also be started manually from **Actions → Build & Push Docker images**.
@@ -117,7 +119,7 @@ In the PrismVox repository, add these Actions secrets under
 **Settings → Secrets and variables → Actions**:
 
 - `DOCKERHUB_USERNAME`: the Docker Hub account used for publication.
-- `DOCKERHUB_TOKEN`: a Docker Hub access token with write permission for the four
+- `DOCKERHUB_TOKEN`: a Docker Hub access token with write permission for the three
   image repositories.
 
 These are the same secret names used by Prism. Configure them for PrismVox too,
@@ -235,6 +237,46 @@ For SIP, **Save** stores the line settings without activating them. **Apply**
 saves the settings and reloads the trunk in Asterisk.
 Saved call settings apply to new calls.
 
+## Configure the standalone knowledge base
+
+Open **Knowledge Base → Embedding provider — local knowledge base** and enter:
+
+- **API URL**: the OpenAI-compatible API root, including `/v1`, for example
+  `http://host.docker.internal:11434/v1` for a reachable Ollama server.
+- **Embedding model**: the ID of an embedding model available on that server.
+- **API key**: optional; the provider credential if authentication is required.
+
+Use **Test connection** to check access and discover the vector dimensions.
+**Save & index documents** validates and saves the provider, then indexes existing
+passages in batches with progress. A blank key field preserves the saved key;
+changing the URL clears it. Stored keys are encrypted and never returned by read
+APIs. The endpoint must be reachable from both the console and the call agent.
+
+Add TXT, Markdown or text-bearing PDF documents to a collection. New uploads are
+indexed automatically. Enable knowledge search in **Settings → Agents & models**
+so the receptionist can request relevant passages. The console's text agent uses
+the same provider and index. Connected phone calls continue to use Prism's own
+knowledge sources.
+
+The index records the API URL, model and dimensions. A provider/model change
+requires re-indexing, even when dimensions are identical. **Re-index embeddings**
+rebuilds every passage in bounded requests and can be rerun after an interruption.
+The original document text is retained. If the provider is unavailable, stored
+text remains available through the existing bounded document fallback; semantic
+search resumes when compatible vectors are ready.
+
+Existing 384-dimensional indexes are migrated without deleting document text.
+After upgrading, configure the provider and finish indexing before relying on
+semantic search. The former bundled embedding service is no longer deployed;
+stop its old container after active calls have ended. No Docker volumes need to
+be removed. Previously published `prismvox-embeddings` images are no longer built
+or used by the current stack.
+
+Optional bootstrap values are `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL` and
+`EMBEDDING_API_KEY`. Saved provider settings take precedence. The retired
+`EMBEDDINGS_URL` variable described a different `/embed` protocol; replace it with
+the compatible API root and model above.
+
 ## Optional Prism integration
 
 Both personal and multi-user Prism deployments are supported. In personal mode,
@@ -348,7 +390,8 @@ Saved database values take precedence over their bootstrap values.
 | `SPEECH_SERVICE_API_KEY` | Optional Bearer credential for external speech APIs |
 | `PRISM_URL`, `PRISM_TOKEN`, `PRISM_PUBLIC_URL` | Optional Prism connection |
 | `WHISPER_HOTWORDS`, `TTS_SPELL_*` | Dictionary bootstrap, independent of the speech engine |
-| `EMBEDDING_MODEL`, `RAG_TOP_K`, `BARGEIN_MS` | Knowledge retrieval and interruption timing |
+| `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY` | Optional standalone embedding API bootstrap; saved Knowledge Base settings override these values |
+| `RAG_TOP_K`, `BARGEIN_MS` | Knowledge retrieval and interruption timing |
 | `LOG_SENSITIVE_DATA`, `DEBUG` | Optional content and SIP diagnostics |
 
 Keep `pgdata`, `secrets` and `asterisk_dynamic` together when moving a deployment.
@@ -400,7 +443,7 @@ does not protect against an administrator controlling the running host.
 ## Development checks
 
 ```sh
-(cd agent && go test -race ./... && go vet ./...)
+(cd agent && go test -race -p 1 ./... && go vet ./...)
 python -m unittest discover -s ui/tests -v
 node ui/tests/voice-browser.cjs
 node ui/tests/dom-regressions.cjs

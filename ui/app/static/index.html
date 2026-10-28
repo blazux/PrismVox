@@ -397,7 +397,25 @@
 <!-- ── RAG ── -->
 <div id="tab-rag" class="tab-content">
   <h3>Knowledge collections</h3>
-  <p class="muted" style="margin-bottom:.75rem">Semantic search (embeddings + pgvector): on each turn, only the passages most relevant to the caller's question are injected. Documents are indexed automatically on upload. Formats: .txt, .md, .pdf.</p>
+  <p class="muted" style="margin-bottom:.75rem">Upload reference documents for the receptionist to search when needed. Formats: .txt, .md, .pdf. Connected phone calls use the knowledge base configured in Prism.</p>
+  <details open style="margin-bottom:1rem">
+    <summary>Embedding provider — local knowledge base</summary>
+    <form id="embedding-form" onsubmit="saveEmbeddingProvider(event)" style="margin-top:.75rem">
+      <div class="inline-form">
+        <label style="flex:2">API URL <input type="url" id="embedding-url" placeholder="http://host.docker.internal:11434/v1" required></label>
+        <label style="flex:1">Embedding model <input type="text" id="embedding-model" placeholder="Model ID served by your provider" required></label>
+      </div>
+      <small class="hint">Use an OpenAI-compatible embedding API, including Ollama or vLLM. Include /v1 in the API root.</small>
+      <label>API key (optional) <input type="password" id="embedding-key" autocomplete="new-password"></label>
+      <small class="hint">Leave blank to keep the saved key. Changing the URL clears the saved key; enter a key for the new endpoint if required.</small>
+      <label><input type="checkbox" id="embedding-clear-key"> Remove saved API key</label>
+      <div class="actions">
+        <button type="button" class="outline" id="embedding-test" onclick="testEmbeddingProvider()">Test connection</button>
+        <button type="submit" id="embedding-save">Save &amp; index documents</button>
+      </div>
+      <p id="embedding-provider-status" role="status" style="overflow-wrap:anywhere"></p>
+    </form>
+  </details>
   <div class="actions" style="margin-bottom:.75rem">
     <button type="button" class="outline" onclick="embedAll()" id="embed-all-btn">↻ Re-index embeddings</button>
     <span id="embed-all-status" class="muted" style="font-size:.78rem"></span>
@@ -601,7 +619,7 @@ function showTab(name, btn) {
   if (trigger) { trigger.classList.add('active'); document.getElementById('page-title').textContent = trigger.textContent.trim(); }
   if (name === 'status')   loadStatus();
   if (name === 'setup')    { loadSip(); loadSipStatus(); }
-  if (name === 'rag')      loadCollections();
+  if (name === 'rag') { loadCollections(); loadEmbeddingProvider(); }
   if (name === 'mcp')      loadMCP();
   if (name === 'contacts') loadContacts();
   if (name === 'outbound') loadOutbound();
@@ -1049,19 +1067,75 @@ async function saveConfig(e) {
 }
 
 // ── RAG Collections ───────────────────────────────────────────────────────────
-async function embedAll() {
-  const btn = document.getElementById('embed-all-btn');
-  const status = document.getElementById('embed-all-status');
-  btn.disabled = true; status.textContent = 'Indexing…';
+let embeddingBusy = false;
+function embeddingPayload() {
+  return {values:{embedding_url:document.getElementById('embedding-url').value.trim(),
+    embedding_model:document.getElementById('embedding-model').value.trim(),
+    embedding_api_key:document.getElementById('embedding-key').value},
+    clear_api_key:document.getElementById('embedding-clear-key').checked};
+}
+function setEmbeddingBusy(busy) {
+  embeddingBusy = busy;
+  for (const id of ['embedding-test','embedding-save','embed-all-btn']) document.getElementById(id).disabled = busy;
+  document.querySelectorAll('#embedding-form input').forEach(input => input.disabled = busy);
+}
+async function loadEmbeddingProvider(updateStatus=true) {
+  if (embeddingBusy) return;
   try {
-    const r = await api('POST', '/api/rag/embed-all');
-    status.textContent = `✓ ${r.embedded} passage(s) (re)indexed.`;
-  } catch (e) {
-    status.textContent = '✗ failed — is the embeddings service responding?';
-  } finally {
-    btn.disabled = false;
-    setTimeout(() => status.textContent = '', 5000);
-  }
+    const cfg = await api('GET', '/api/embeddings');
+    document.getElementById('embedding-url').value = cfg.embedding_url;
+    document.getElementById('embedding-model').value = cfg.embedding_model;
+    const key = document.getElementById('embedding-key');
+    key.value = '';
+    key.placeholder = cfg.api_key_configured ? 'Saved key — leave blank to keep' : 'Optional';
+    document.getElementById('embedding-clear-key').checked = false;
+    if (updateStatus) document.getElementById('embedding-provider-status').textContent = cfg.configured
+      ? `${cfg.indexed}/${cfg.total} passages indexed${cfg.embedding_dimensions ? ' · '+cfg.embedding_dimensions+' dimensions' : ''}${cfg.pending ? '. Index the remaining documents before using semantic search.' : ''}`
+      : 'Configure an embedding provider to enable semantic search. Existing document text is preserved.';
+  } catch (e) { document.getElementById('embedding-provider-status').textContent = e.message; }
+}
+async function testEmbeddingProvider() {
+  if (embeddingBusy) return;
+  const status = document.getElementById('embedding-provider-status');
+  setEmbeddingBusy(true); status.textContent = 'Testing…';
+  try {
+    const result = await api('POST','/api/embeddings/test',embeddingPayload());
+    status.textContent = `Connection successful · ${result.dimensions} dimensions. Save to apply these settings.`;
+  } catch (e) { status.textContent = e.message; }
+  finally { setEmbeddingBusy(false); }
+}
+async function reindexDocuments(status) {
+  let after = 0, identity = null, result;
+  do {
+    result = await api('POST','/api/rag/embed-all',{after_id:after});
+    if (identity && identity !== result.index_key) throw Error('Embedding settings changed; restart indexing.');
+    identity = result.index_key;
+    status.textContent = `${result.indexed}/${result.total} passages indexed…`;
+    after = result.next_after;
+  } while (after !== null);
+  status.textContent = result.pending ? `${result.pending} passages changed during indexing. Re-index to finish.` : `✓ ${result.indexed}/${result.total} passages indexed.`;
+}
+async function saveEmbeddingProvider(event) {
+  event.preventDefault();
+  if (embeddingBusy) return;
+  const status = document.getElementById('embedding-provider-status');
+  setEmbeddingBusy(true); status.textContent = 'Testing and saving…';
+  let persisted = false;
+  try {
+    const result = await api('PUT','/api/embeddings',embeddingPayload());
+    persisted = true;
+    if (result.pending) await reindexDocuments(status);
+    else status.textContent = `Saved · ${result.dimensions} dimensions · ${result.indexed}/${result.total} passages indexed.`;
+  } catch (e) { status.textContent = e.message; }
+  finally { setEmbeddingBusy(false); if (persisted) await loadEmbeddingProvider(false); }
+}
+async function embedAll() {
+  if (embeddingBusy) return;
+  const status = document.getElementById('embed-all-status');
+  setEmbeddingBusy(true); status.textContent = 'Indexing…';
+  try { await reindexDocuments(status); }
+  catch (e) { status.textContent = e.message; }
+  finally { setEmbeddingBusy(false); await loadEmbeddingProvider(); }
 }
 
 async function loadCollections() {

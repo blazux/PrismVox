@@ -40,6 +40,9 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 		pingErr = pool.Ping(pingCtx)
 		cancel()
 		if pingErr == nil {
+			if err := migrateEmbeddingSchema(ctx, pool); err != nil {
+				return pool, fmt.Errorf("embedding schema migration: %w", err)
+			}
 			if _, err := pool.Exec(ctx, ownershipMigration); err != nil {
 				return pool, fmt.Errorf("archive ownership migration: %w", err)
 			}

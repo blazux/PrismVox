@@ -62,12 +62,12 @@ def decrypt(value, field):
 
 async def migrate(pool):
     # If ciphertext already exists, require the old key BEFORE creating anything.
-    encrypted = await pool.fetchval("SELECT EXISTS(SELECT 1 FROM config WHERE key IN ('sip_password','voice_api_key','voice_service_api_key') AND value LIKE 'enc:v1:%') OR EXISTS(SELECT 1 FROM mcp_servers WHERE auth_token LIKE 'enc:v1:%')")
+    encrypted = await pool.fetchval("SELECT EXISTS(SELECT 1 FROM config WHERE key IN ('sip_password','voice_api_key','voice_service_api_key','embedding_api_key') AND value LIKE 'enc:v1:%') OR EXISTS(SELECT 1 FROM mcp_servers WHERE auth_token LIKE 'enc:v1:%')")
     load_key(create=not encrypted)
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute('SELECT pg_advisory_xact_lock(719209)')
-            for row in await conn.fetch("SELECT key,value FROM config WHERE key IN ('sip_password','voice_api_key','voice_service_api_key') FOR UPDATE"):
+            for row in await conn.fetch("SELECT key,value FROM config WHERE key IN ('sip_password','voice_api_key','voice_service_api_key','embedding_api_key') FOR UPDATE"):
                 field, value = row['key'], row['value']
                 if value.startswith(PREFIX):
                     decrypt(value, field)

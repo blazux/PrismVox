@@ -30,6 +30,7 @@ from typing import Optional
 import aiohttp
 import secret_store
 import voice_config
+import embedding_config
 import history_archive
 import asyncpg
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Response
@@ -91,7 +92,6 @@ async def _backend_for(pool):
 LLM_MODEL    = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "Qwen/Qwen2.5-7B-Instruct"
 TTS_URL      = os.getenv("TTS_URL", "http://tts:8000").removesuffix("/synthesize")
 STT_URL      = os.getenv("STT_URL", "http://stt:9000")
-EMBEDDINGS_URL = os.getenv("EMBEDDINGS_URL", "http://embeddings:8002")
 ARI_URL      = os.getenv("ARI_URL", "http://asterisk:8088")
 ARI_USER     = os.getenv("ARI_USER", "phoneagent")
 ARI_PASS     = os.getenv("ARI_PASS", "change_me")
@@ -128,7 +128,7 @@ SIP_KEYS = list(SIP_ENV_DEFAULTS.keys())
 # be handed to anyone who can reach the UI (stolen SIP credentials = billed calls
 # under our number). They stay write-only — the UI posts SECRET_SENTINEL back when
 # the operator did not retype the secret, and the stored value is kept.
-SECRET_KEYS = ("sip_password", "voice_api_key", "voice_service_api_key")
+SECRET_KEYS = ("sip_password", "voice_api_key", "voice_service_api_key", "embedding_api_key")
 SECRET_SENTINEL = "__unchanged__"
 
 
@@ -282,6 +282,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         );
     """)
     await history_archive.migrate(pool)
+    await embedding_config.migrate(pool)
     await pool.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS context_start INTEGER NOT NULL DEFAULT 0")
     await pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_chat_sessions_last_at ON chat_sessions (last_at DESC);"
@@ -330,6 +331,7 @@ async def index():
 
 
 voice_config.install(app, _pool_or_error)
+embedding_config.install(app, _pool_or_error)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -351,7 +353,7 @@ async def update_config(body: ConfigUpdate):
     # it would round-trip a blank and wipe them). Secrets are set via PUT /api/sip.
     if {"llm_model_oncall", "llm_url_oncall"} & body.values.keys():
         raise HTTPException(400, 'Vox uses one model. Use llm_model_standard and llm_url_standard.')
-    values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS and k not in voice_config.KEYS}
+    values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS and k not in voice_config.KEYS and k not in embedding_config.KEYS}
     for key in ('llm_url_standard',):
         if values.get(key, '').strip():
             parsed = urlparse(values[key].strip())
@@ -643,16 +645,9 @@ async def delete_collection(col_id: int):
     return {"ok": True}
 
 
-async def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts via the embeddings service (384-dim, normalized for cosine)."""
-    if not texts:
-        return []
-    async with aiohttp.ClientSession() as s:
-        async with s.post(f"{EMBEDDINGS_URL}/embed", json={"texts": texts},
-                          timeout=aiohttp.ClientTimeout(total=60)) as r:
-            r.raise_for_status()
-            data = await r.json()
-    return data["embeddings"]
+async def _embed_texts(texts: list[str], cfg=None) -> list[list[float]]:
+    cfg = cfg or await embedding_config.prepared(_pool_or_error())
+    return await embedding_config.embed(cfg, texts)
 
 
 def _vector_literal(vec: list[float]) -> str:
@@ -680,14 +675,19 @@ async def upload_document(col_id: int, file: UploadFile = File(...)):
 
     # Embed the chunks for semantic search. On failure, store them with NULL
     # embedding (RAG falls back to dump-all for those) so upload never blocks.
+    cfg = None
     try:
-        vecs = await _embed_texts(chunks)
-    except Exception as e:
-        logger.warning(f"embed on upload failed ({e}); storing chunks without embeddings")
+        cfg = await embedding_config.prepared(pool)
+        vecs = await _embed_texts(chunks, cfg)
+    except Exception:
+        logger.warning("Embedding provider unavailable on upload; storing documents for re-indexing")
         vecs = []
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await conn.execute('SELECT pg_advisory_xact_lock($1)', embedding_config.LOCK)
+            if cfg and embedding_config.signature(await embedding_config.settings(conn)) != embedding_config.signature(cfg):
+                raise HTTPException(409, 'Embedding settings changed; retry the upload')
             # Delete existing chunks from this source in this collection
             await conn.execute(
                 "DELETE FROM rag_chunks WHERE collection_id=$1 AND source=$2",
@@ -696,34 +696,12 @@ async def upload_document(col_id: int, file: UploadFile = File(...)):
             for i, chunk in enumerate(chunks):
                 emb = _vector_literal(vecs[i]) if i < len(vecs) else None
                 await conn.execute(
-                    "INSERT INTO rag_chunks (collection_id, source, chunk_index, content, embedding) "
-                    "VALUES ($1,$2,$3,$4,$5::vector)",
-                    col_id, filename, i, chunk, emb,
+                    "INSERT INTO rag_chunks (collection_id, source, chunk_index, content, embedding, embedding_key) "
+                    "VALUES ($1,$2,$3,$4,$5::vector,$6)",
+                    col_id, filename, i, chunk, emb, embedding_config.index_key(cfg) if emb else '',
                 )
 
     return {"chunks_added": len(chunks), "source": filename, "embedded": len(vecs)}
-
-
-@app.post("/api/rag/embed-all")
-async def embed_all():
-    """Backfill embeddings for chunks that don't have one yet (e.g. uploaded before
-    semantic RAG, or while the embeddings service was down)."""
-    pool = _pool_or_error()
-    rows = await pool.fetch("SELECT id, content FROM rag_chunks WHERE embedding IS NULL")
-    done = 0
-    BATCH = 64
-    for i in range(0, len(rows), BATCH):
-        batch = rows[i:i + BATCH]
-        vecs = await _embed_texts([r["content"] for r in batch])
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                for r, v in zip(batch, vecs):
-                    await conn.execute(
-                        "UPDATE rag_chunks SET embedding=$1::vector WHERE id=$2",
-                        _vector_literal(v), r["id"],
-                    )
-        done += len(batch)
-    return {"embedded": done}
 
 
 @app.get("/api/rag/collections/{col_id}/chunks")
@@ -1615,10 +1593,12 @@ async def _kb_search(pool: asyncpg.Pool, query: str, top_k: int = 5) -> str:
     """Embed the query and return the top-k most similar chunks (pgvector). Falls back
     to the dump when nothing is embedded yet."""
     vecs = []
+    cfg = None
     try:
-        vecs = await _embed_texts([query]) if query.strip() else []
-    except Exception as e:
-        logger.warning(f"kb search embed failed: {e}")
+        cfg = await embedding_config.prepared(pool)
+        vecs = await _embed_texts([query], cfg) if query.strip() else []
+    except Exception:
+        logger.warning("Embedding provider unavailable; using stored document text")
     rows = []
     if vecs:
         rows = await pool.fetch(
@@ -1626,9 +1606,10 @@ async def _kb_search(pool: asyncpg.Pool, query: str, top_k: int = 5) -> str:
                FROM   rag_chunks rk
                JOIN   rag_collections rc ON rk.collection_id = rc.id
                WHERE  rc.enabled = TRUE AND rk.embedding IS NOT NULL
+                 AND rk.embedding_key=$3 AND vector_dims(rk.embedding)=$4
                ORDER  BY rk.embedding <=> $1::vector
                LIMIT  $2""",
-            _vector_literal(vecs[0]), top_k,
+            _vector_literal(vecs[0]), top_k, embedding_config.index_key(cfg), len(vecs[0]),
         )
     if not rows:
         return (await _rag_context(pool)) or "No relevant information found in the knowledge base."

@@ -55,11 +55,11 @@ jobs:
         run: go vet ./...
       - name: Test call agent
         working-directory: agent
-        run: go test -race ./...
+        run: go test -race -p 1 ./...
       - name: Test console and archive
         run: python -m unittest discover -s ui/tests -p 'test_*.py'
-      - name: Test tool trace rendering
-        run: node --test ui/tests/call-log-tools.cjs
+      - name: Test console interactions
+        run: node --test ui/tests/call-log-tools.cjs ui/tests/embedding-provider.cjs
 
   build:
     needs: verify
@@ -68,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [agent, ui, asterisk, embeddings]
+        service: [agent, ui, asterisk]
     steps:
       - uses: actions/checkout@v4
       - name: Check Docker Hub credentials

@@ -23,12 +23,13 @@ CREATE TABLE rag_chunks (
     source        TEXT,
     chunk_index   INT  NOT NULL DEFAULT 0,
     content       TEXT NOT NULL,
-    embedding     vector(384),   -- paraphrase-multilingual-MiniLM-L12-v2 (embeddings service); NULL until embedded
+    embedding     vector,
+    embedding_key TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX ON rag_chunks (collection_id);
-CREATE INDEX ON rag_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON rag_chunks (embedding_key);
 
 -- ── MCP servers ───────────────────────────────────────────────────────────────
 CREATE TABLE mcp_servers (

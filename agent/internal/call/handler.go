@@ -415,6 +415,7 @@ func (h *Handler) Run(ctx context.Context) {
 	// RAG is agentic: when enabled, the model gets a search_knowledge_base tool
 	// (inbound only — outbound calls are mission-driven, no KB).
 	h.ragEnabled = cfg.RAGEnabled && h.task == nil
+	h.embClient.Configure(cfg.Raw)
 
 	if h.pool != nil && cfg.MCPEnabled {
 		if err := h.mcpMgr.ConnectAll(ctx, h.pool); err != nil {
@@ -2778,14 +2779,18 @@ func (h *Handler) searchKnowledge(ctx context.Context, query string) string {
 		return strings.TrimSpace(b.String())
 	}
 
+	if h.pool == nil {
+		return ""
+	}
 	var qvec []float32
+	key := ""
 	if v, err := h.embClient.EmbedOne(ctx, query); err != nil {
 		log.Printf("[%s] KB search embed error: %v", h.channelID, err)
-		return ""
 	} else {
 		qvec = v
+		key = h.embClient.Key(len(v))
 	}
-	result, err := rag.GetContext(ctx, h.pool, qvec, ragTopK)
+	result, err := rag.GetContext(ctx, h.pool, qvec, key, ragTopK)
 	if err != nil {
 		log.Printf("[%s] KB search error: %v", h.channelID, err)
 		return ""

@@ -21,9 +21,9 @@ const maxContextChars = 12_000
 // GetContext returns RAG context for a turn. queryVec is the embedding of the
 // caller's question; pass nil to force the dump-all fallback. topK bounds the
 // number of chunks returned in semantic mode.
-func GetContext(ctx context.Context, pool *pgxpool.Pool, queryVec []float32, topK int) (string, error) {
+func GetContext(ctx context.Context, pool *pgxpool.Pool, queryVec []float32, embeddingKey string, topK int) (string, error) {
 	if len(queryVec) > 0 {
-		if out, err := semanticSearch(ctx, pool, queryVec, topK); err != nil {
+		if out, err := semanticSearch(ctx, pool, queryVec, embeddingKey, topK); err != nil {
 			log.Printf("rag: semantic search error: %v — falling back to dump-all", err)
 		} else if out != "" {
 			return out, nil
@@ -35,7 +35,7 @@ func GetContext(ctx context.Context, pool *pgxpool.Pool, queryVec []float32, top
 
 // semanticSearch returns the top-k chunks by cosine distance to queryVec. Returns
 // "" (no error) when no chunk has an embedding yet, so the caller can fall back.
-func semanticSearch(ctx context.Context, pool *pgxpool.Pool, queryVec []float32, topK int) (string, error) {
+func semanticSearch(ctx context.Context, pool *pgxpool.Pool, queryVec []float32, embeddingKey string, topK int) (string, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -44,9 +44,10 @@ func semanticSearch(ctx context.Context, pool *pgxpool.Pool, queryVec []float32,
 		FROM   rag_chunks rk
 		JOIN   rag_collections rc ON rk.collection_id = rc.id
 		WHERE  rc.enabled = TRUE AND rk.embedding IS NOT NULL
+		  AND rk.embedding_key = $3 AND vector_dims(rk.embedding) = $4
 		ORDER  BY rk.embedding <=> $1::vector
 		LIMIT  $2
-	`, vectorString(queryVec), topK)
+	`, vectorString(queryVec), topK, embeddingKey, len(queryVec))
 	if err != nil {
 		return "", err
 	}
