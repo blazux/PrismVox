@@ -338,13 +338,13 @@ standard project name, that network is `prismvox_agentnet`.
 - Prism relays transfers, messages and hang-up requests to PrismVox/Asterisk.
 - The standalone console points to Prism when docked; its protected administration
   API remains available to Prism.
-- **Prism → Telephony → Settings → Agents & models → Conversation model — recognised callers**
+- **Agents & models → Conversation model — recognised callers**, under **Admin → Telephony** in shared mode or **Settings → Telephony** in personal mode,
   selects the model for recognized callers. An empty selection follows the Prism
   deployment default; the web default is unchanged. Unknown callers and outbound
   missions share the **PrismVox model — unknown callers & outbound calls** in
   the same section. Its endpoint is independent of the Prism model catalogue.
 
-The connected **Telephony** page groups settings into **Agents & models**,
+Prism’s telephony configuration groups settings into **Agents & models**,
 **Voice & greeting**, **Transfers & directories** and **Phone connection**.
 Use the Save button beside the block you edited. Voice and greetings share
 **Save voice & greeting**; the public knowledge collection selector saves
@@ -385,7 +385,7 @@ context → Lighten context** preserves the full conversation archive. **Calls**
 provides manual number, period, direction and text filters.
 
 Connected Prism exposes a **Telephony** app. A global administrator selects
-existing groups under **Access**. Each authorized group has its own supervision
+existing groups under **Admin → Telephony → App access**. Each authorized group has its own supervision
 conversation and sees the standard’s calls. Recognized callers’ private calls
 remain owner-scoped. Outbound tasks retain their initiating owner or standard
 scope. Installation IDs prevent reusing another Prism installation’s user IDs.

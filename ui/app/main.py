@@ -326,8 +326,9 @@ DOCKED_PAGE = """<!doctype html>
   <div class="brand"><h1><img class="logo" src="/static/logo.svg" alt="">PrismVox</h1><span class="subtitle">Voice &amp; telephony</span></div>
   <span class="badge badge-ok">Connected to Prism</span>
   <h2 style="margin-top:16px">Telephony is in Prism</h2>
-  <p>Open Prism’s Telephony app to talk to the reception agent, consult call history
-  and manage the switchboard, voices, greetings, directory and SIP trunk.</p>
+  <p>Open Prism’s Telephony app to view call traffic, consult call history,
+  schedule outbound calls and talk to the reception agent. Configure the line
+  in Prism’s Settings in personal mode or Admin in shared mode.</p>
   %s
   <!--AUTH_ACTION-->
 </main></body></html>"""
