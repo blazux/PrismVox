@@ -24,6 +24,8 @@ type Client struct {
 	http         *http.Client
 	continuityMu sync.Mutex
 	continuity   []speechRequest
+	cachedSpeech string
+	cacheDir     string
 	// Acronym dictionary (DB-managed, set per call). Empty → the service uses its
 	// env defaults. SpellWords = always spell; SpellExceptions = read as words.
 	SpellWords      string
@@ -36,9 +38,16 @@ func New() *Client {
 	if u == "" {
 		u = "http://tts:8000/synthesize"
 	}
+	cacheDir := os.Getenv("TTS_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = "/var/cache/prismvox/tts"
+	} else if cacheDir == "off" {
+		cacheDir = ""
+	}
 	return &Client{
-		URL:  u,
-		http: &http.Client{Timeout: 30 * time.Second},
+		URL:      u,
+		http:     &http.Client{Timeout: 30 * time.Second},
+		cacheDir: cacheDir,
 	}
 }
 
@@ -59,6 +68,31 @@ func (c *Client) SynthesizeContext(ctx context.Context, text string) ([]byte, er
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	path := c.cachePath(text, "wav")
+	if path == "" {
+		return c.synthesizeWAV(ctx, text)
+	}
+	unlock, err := lockAudio(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if data, ok := readAudio(path); ok {
+		return data, nil
+	}
+	data, err := c.synthesizeWAV(ctx, text)
+	if err == nil && ctx.Err() == nil {
+		if samples, _, decodeErr := audio.DecodeWAV(data); decodeErr == nil && len(samples) > 0 {
+			writeAudio(path, data)
+		}
+	}
+	return data, err
+}
+
+func (c *Client) synthesizeWAV(ctx context.Context, text string) ([]byte, error) {
 
 	body := map[string]any{"text": text}
 	endpoint := c.URL

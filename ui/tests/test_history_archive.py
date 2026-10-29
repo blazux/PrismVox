@@ -73,6 +73,26 @@ class HistoryArchiveTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(self.a.HTTPException):
                 await archive.read(self.pool,query,scope)
 
+    async def test_long_conversation_messages_are_fully_retrievable(self):
+        session='long-supervision'
+        await self.pool.execute('INSERT INTO supervision_threads(session_id) VALUES($1)',session)
+        content='début '+('x'*36000)+' fin importante'
+        await self.pool.execute("INSERT INTO supervision_messages(session_id,role,content) VALUES($1,'user',$2)",session,content)
+        scope={'admin':True}
+        query={'kind':'conversation','query':'fin importante','limit':1}
+        chunks=[]
+        while True:
+            result=await self.a.history_archive.read(self.pool,query,scope,session)
+            self.assertEqual(result['total'],1)
+            item=result['items'][0]
+            chunks.append(item['record_text'])
+            if item['next_text_offset'] is None:break
+            query['text_offset']=item['next_text_offset']
+        self.assertEqual(json.loads(''.join(chunks))['content'],content)
+        with self.assertRaises(self.a.HTTPException) as failure:
+            await self.a.history_archive.read(self.pool,{'kind':'conversation','text_offset':'bad'},scope,session)
+        self.assertEqual(failure.exception.status_code,400)
+
     async def test_supervisor_reads_old_calls_and_survives_restart(self):
         await self.seed()
         calls=[]

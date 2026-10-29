@@ -183,6 +183,7 @@ type Handler struct {
 	// a slow/regenerating TTS take is in flight.
 	fillerWav   []byte
 	waitCueWav  []byte
+	waitCues    []waitingClip
 	responseCue *waitingCue
 	fillerMu    sync.Mutex
 	logID       int64
@@ -895,8 +896,8 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 
 		tLLM := time.Now()
 		h.responseCue = nil
-		if len(h.waitCueWav) > 0 {
-			h.responseCue = &waitingCue{wav: h.waitCueWav, started: tLLM, delay: 2 * time.Second}
+		if len(h.waitCueWav) > 0 || len(h.waitCues) > 0 {
+			h.responseCue = &waitingCue{wav: h.waitCueWav, clips: h.waitCues, started: tLLM, delay: 3 * time.Second}
 		}
 
 		var firstPacket <-chan time.Time
@@ -905,7 +906,11 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		}
 		turnCtx, cancelTurn := context.WithCancel(ctx)
 		remoteTools := prismToolLog{session: h.llmClient.SessionID}
-		turnCtx = llm.WithToolTrace(turnCtx, remoteTools.observe)
+		cue := h.responseCue
+		turnCtx = llm.WithToolTrace(turnCtx, func(event llm.ToolTrace) {
+			remoteTools.observe(event)
+			cue.observeTool(event)
+		})
 		sentCh, toolsCh, llmErrCh := h.llmClient.StreamResponse(
 			turnCtx,
 			h.systemPrompt(cfg),
@@ -1429,7 +1434,9 @@ func (h *Handler) handleToolCalls(
 			query := strings.TrimSpace(stringFromMap(args, "query"))
 			h.ragUsed = true
 			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "search_knowledge_base", "args": args})
+			finishLookup := h.responseCue.beginLookup(toolName, args)
 			result := h.searchKnowledge(ctx, query)
+			finishLookup()
 			privacy.Logf("[%s] KB search %q → %d chars", h.channelID, query, len(result))
 			if result == "" {
 				result = "Aucune information pertinente trouvée dans la base de connaissance."
@@ -1439,7 +1446,9 @@ func (h *Handler) handleToolCalls(
 
 		default:
 			// MCP tool — result needs LLM interpretation
+			finishLookup := h.responseCue.beginLookup(toolName, args)
 			result, err := h.mcpMgr.CallTool(ctx, toolName, args)
+			finishLookup()
 			if err != nil {
 				log.Printf("[%s] MCP tool '%s' error: %v", h.channelID, toolName, err)
 				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": toolName, "args": args, "outcome": "failed"})

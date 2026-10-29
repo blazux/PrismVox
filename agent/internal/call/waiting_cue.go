@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -11,14 +12,26 @@ import (
 // One shared state follows a response through model generation, local tool work
 // and its spoken follow-up. The first real audio permanently disarms the cue.
 type waitingCue struct {
-	wav     []byte
-	started time.Time
-	delay   time.Duration
-	spoken  atomic.Bool
-	played  atomic.Bool
+	wav           []byte
+	started       time.Time
+	delay         time.Duration
+	spoken        atomic.Bool
+	played        atomic.Bool
+	clips         []waitingClip
+	lookups       atomic.Int32
+	lookupMu      sync.Mutex
+	remoteLookups map[string]bool
 }
 
 func (h *Handler) loadWaitCue() {
+	if dir := os.Getenv("WAIT_CUE_DIR"); dir != "" {
+		clips, err := loadWaitingClips(dir)
+		if err == nil {
+			h.waitCues = clips
+		} else {
+			log.Printf("[%s] Waiting clips unavailable: %v", h.channelID, err)
+		}
+	}
 	path := os.Getenv("WAIT_CUE_WAV")
 	if path == "" {
 		return
@@ -40,6 +53,8 @@ func (c *waitingCue) remaining() time.Duration {
 
 // withWaitCue merges the cached clip into the ordinary playback queue, never
 // directly over speech. Fast replies and later gaps between chunks get no cue.
+// Once queued, the full cue precedes ready response audio; only caller/call
+// cancellation may flush it. Provider readiness must not cancel its playback.
 func (h *Handler) withWaitCue(ctx context.Context, in <-chan playChunk) <-chan playChunk {
 	c := h.responseCue
 	if c == nil || c.spoken.Load() || c.played.Load() {
@@ -108,10 +123,11 @@ func (h *Handler) withWaitCue(ctx context.Context, in <-chan playChunk) <-chan p
 				default:
 				}
 				if ctx.Err() == nil && !c.spoken.Load() && c.played.CompareAndSwap(false, true) {
-					if !send(playChunk{wav: c.wav, text: "Hmm…"}) {
+					clip := c.clip()
+					if !send(clip) {
 						return
 					}
-					log.Printf("[%s] Initial response silence — playing waiting cue (%dms)", h.channelID, time.Since(c.started).Milliseconds())
+					log.Printf("[%s] Initial response silence — playing waiting cue %q (%dms)", h.channelID, clip.text, time.Since(c.started).Milliseconds())
 				}
 			}
 		}
@@ -157,8 +173,9 @@ func (h *Handler) localWaitCue(ctx context.Context, eligible bool) func() {
 		if ctx.Err() != nil || c.spoken.Load() || !c.played.CompareAndSwap(false, true) {
 			return
 		}
-		log.Printf("[%s] Initial response silence — playing waiting cue during tool work", h.channelID)
-		if err := h.playWAV(ctx, c.wav, h.channelID); err != nil && ctx.Err() == nil {
+		clip := c.clip()
+		log.Printf("[%s] Initial response silence — playing waiting cue %q during tool work", h.channelID, clip.text)
+		if err := h.playWAV(ctx, clip.wav, h.channelID); err != nil && ctx.Err() == nil {
 			log.Printf("[%s] Waiting cue playback failed: %v", h.channelID, err)
 		}
 	}()

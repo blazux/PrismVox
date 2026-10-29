@@ -67,6 +67,9 @@ docker compose up -d --no-build
 ```
 
 Open **http://localhost:7860** and sign in using `UI_USER` / `UI_PASSWORD`.
+The console opens a browser session for eight hours. Use **Sign out** to close
+it. Existing API clients can continue to use HTTP Basic with the same credentials;
+agent clients can use their separate `AGENT_API_KEY` Bearer token.
 The HTTPS console at **https://localhost:7861** uses a self-signed certificate.
 Both ports bind to localhost by default. For remote use, put the console behind
 a trusted HTTPS reverse proxy; `UI_BIND` controls the published bind address.
@@ -159,6 +162,39 @@ Short replies are synthesized together where possible; streaming waits at most
 200 ms after the first complete sentence to group up to 400 characters. Longer
 or slower replies start progressively. Completed audio requests are linked within
 each call where the provider supports request stitching.
+
+Identical speech is reused from a private audio cache across calls and agent
+restarts. The first synthesis still streams immediately. A change to the text,
+voice, model, language, stability, pronunciation or provider credential selects
+new audio. Interrupted or failed syntheses are not cached. The cache retains at
+most 256 MiB and 4,096 clips, removing the least recently used clips first.
+It lives in the `tts_cache` Docker volume and can contain personalized speech.
+Set `TTS_CACHE_DIR=off` to disable reuse. If you edit a voice directly at the
+provider without changing its ID, clear the cache to hear the updated voice:
+`docker compose exec agent sh -c 'rm -f /var/cache/prismvox/tts/*.audio'`.
+The prerecorded waiting cue remains a separate local audio file. It starts after
+three seconds of initial response silence. Once started, it finishes before ready
+response audio is played; caller interruption or hangup can still stop it.
+
+To rotate several prerecorded fillers, set `WAIT_CUE_DIR` to a directory inside
+the agent containing WAV files and `clips.json`. The picker avoids its three most
+recent choices across calls. Clips marked `lookup_only` are eligible only while
+a read or search tool is running, in standalone and Prism-connected calls. Unknown
+operations and writes use neutral fillers. There is at most one filler per
+response, and fast responses do not play one.
+
+```json
+[
+  {"file": "alors.wav", "text": "Alors…"},
+  {"file": "je-regarde.wav", "text": "Je regarde…", "lookup_only": true}
+]
+```
+
+Use mono WAV audio at 8 kHz, up to two seconds per clip and 32 clips per pack.
+Include at least one neutral clip; four or more allow the full repetition window.
+Generate the files with your chosen voice and replace them when changing voice.
+An invalid pack falls back to `WAIT_CUE_WAV` when configured. Keep the directory
+in a persistent volume, for example `/sounds/waiting-cues`.
 
 Audio, text sent for synthesis and transcripts are processed by ElevenLabs.
 Provider charges apply. Language-model requests go to the model provider you
@@ -302,7 +338,7 @@ standard project name, that network is `prismvox_agentnet`.
 - Prism relays transfers, messages and hang-up requests to PrismVox/Asterisk.
 - The standalone console points to Prism when docked; its protected administration
   API remains available to Prism.
-- **Prism → Admin → Telephony → Agents & models → Conversation model — recognised callers**
+- **Prism → Telephony → Settings → Agents & models → Conversation model — recognised callers**
   selects the model for recognized callers. An empty selection follows the Prism
   deployment default; the web default is unchanged. Unknown callers and outbound
   missions share the **PrismVox model — unknown callers & outbound calls** in
@@ -348,7 +384,7 @@ bounded recent window and a retained handoff keep model context small. **Agent
 context → Lighten context** preserves the full conversation archive. **Calls**
 provides manual number, period, direction and text filters.
 
-Connected Prism exposes a **PrismVox** workspace. A global administrator selects
+Connected Prism exposes a **Telephony** app. A global administrator selects
 existing groups under **Access**. Each authorized group has its own supervision
 conversation and sees the standard’s calls. Recognized callers’ private calls
 remain owner-scoped. Outbound tasks retain their initiating owner or standard
@@ -383,11 +419,13 @@ Saved database values take precedence over their bootstrap values.
 | `AGENT_API_KEY` | Bearer authentication for text-agent/API clients |
 | `SIP_*` | Initial trunk configuration and TLS verification |
 | `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` | Language-model gateway |
-| `WAIT_CUE_WAV` | Optional prerecorded WAV path inside the agent container; played once after two seconds of initial response silence |
+| `WAIT_CUE_WAV` | Optional prerecorded WAV path inside the agent container; played once after three seconds of initial response silence |
+| `WAIT_CUE_DIR` | Optional directory containing `clips.json` and prerecorded fillers; rotates clips and avoids recent repeats |
 | `STT_PROVIDER`, `TTS_PROVIDER` | `elevenlabs`, `openai` or legacy `service` |
 | `ELEVENLABS_*` | ElevenLabs credentials, voice, models, language and stability |
 | `STT_URL`, `TTS_URL`, `STT_MODEL`, `TTS_MODEL`, `TTS_VOICE` | External speech APIs |
 | `SPEECH_SERVICE_API_KEY` | Optional Bearer credential for external speech APIs |
+| `TTS_CACHE_DIR` | Persistent audio cache directory; `off` disables reuse |
 | `PRISM_URL`, `PRISM_TOKEN`, `PRISM_PUBLIC_URL` | Optional Prism connection |
 | `WHISPER_HOTWORDS`, `TTS_SPELL_*` | Dictionary bootstrap, independent of the speech engine |
 | `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY` | Optional standalone embedding API bootstrap; saved Knowledge Base settings override these values |
@@ -398,6 +436,7 @@ Keep `pgdata`, `secrets` and `asterisk_dynamic` together when moving a deploymen
 Stored credentials use AES-256-GCM; the encryption key lives in the persistent
 `secrets` volume, outside PostgreSQL. Losing it makes those credentials unreadable.
 Console TLS certificates live in `ui_certs`; generated media uses `sounds`.
+Reusable synthesized speech lives in the private, bounded `tts_cache` volume.
 Do not run `docker compose down -v` to update an installation.
 
 ### Optional local language model

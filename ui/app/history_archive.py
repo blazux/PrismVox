@@ -25,7 +25,7 @@ HISTORY_TOOL = {"type": "function", "function": {
         "number": {"type": "string", "description": "Phone filter: at least six digits; formatting is removed and up to nine trailing digits are matched."}, "direction": {"type": "string", "enum": ["inbound", "outbound"], "description": "Omit for both. A completed-call status filter is not supported; inspect ended_at when needed."},
         "query": {"type": "string", "description": "Up to 500 characters of case-insensitive literal text in phone, summary, message or transcript (or supervision message content for kind=conversation). This is not semantic topic classification."},
         "section": {"type": "string", "enum": ["turns", "tools", "summary"], "description": "With id: turns (default) reads the transcript, tools reads traces, summary reads the stored summary/message."},
-        "text_offset": {"type": "integer", "description": "For a call detail returned as record_text, concatenate slices in order. Pass next_text_offset with limit=1 and the same id/section; record offset is response offset plus the item index. Default 0."},
+        "text_offset": {"type": "integer", "description": "For any record returned as record_text, concatenate slices in order. Pass next_text_offset with limit=1, the same filters and record offset (response offset plus item index). Keep id/section for call details or kind=conversation for earlier messages. Default 0."},
         "offset": {"type": "integer", "description": "Zero-based record offset, default 0. Continue with the returned next_offset; do not calculate offset+limit."}, "limit": {"type": "integer", "description": "Requested rows per page, 1–50, default 20. Output bounds can produce fewer rows. next_offset=null ends record pagination."}
     }, "additionalProperties": False}}}
 
@@ -139,6 +139,10 @@ def bounded_page(rows, offset, total, text_offset=0):
 
 async def read(pool, query, scope, session='', metadata_bounded=True):
     offset, limit = page_args(query)
+    try:
+        text_offset = max(0, int(query.get('text_offset') or 0))
+    except (ValueError, TypeError):
+        raise HTTPException(400, 'Invalid text offset') from None
     if query.get('kind', 'calls') not in ('calls', 'conversation'):
         raise HTTPException(400, 'Unknown archive kind')
     if query.get('kind') == 'conversation':
@@ -149,8 +153,8 @@ async def read(pool, query, scope, session='', metadata_bounded=True):
         args = [session, '%' + escape_like(text) + '%']
         where = "session_id=$1 AND content ILIKE $2 ESCAPE '\\'"
         total = await pool.fetchval(f'SELECT count(*) FROM supervision_messages WHERE {where}', *args)
-        rows = await pool.fetch(f"SELECT id,role,left(content,4000) AS content,tools->-1->'arguments' AS last_read,created_at FROM supervision_messages WHERE {where} ORDER BY id DESC LIMIT $3 OFFSET $4", *args, limit, offset)
-        return bounded_page(rows, offset, total)
+        rows = await pool.fetch(f"SELECT id,role,content,tools->-1->'arguments' AS last_read,created_at FROM supervision_messages WHERE {where} ORDER BY id DESC LIMIT $3 OFFSET $4", *args, limit, offset)
+        return bounded_page(rows, offset, total, text_offset)
     args = []; clauses = [audience_clause(scope, args)]
     if query.get('id') is not None:
         try:
@@ -180,14 +184,14 @@ async def read(pool, query, scope, session='', metadata_bounded=True):
             row = await pool.fetchrow(f'SELECT summary,message FROM call_logs WHERE {where}', *args)
             if row is None:
                 raise HTTPException(404, 'Call not found')
-            return bounded_page([row], 0, 1, max(0, int(query.get('text_offset') or 0)))
+            return bounded_page([row], 0, 1, text_offset)
         field = 'tools_used' if query.get('section') == 'tools' else 'turns'
         count = await pool.fetchval(f"SELECT jsonb_array_length(COALESCE({field},'[]'::jsonb)) FROM call_logs WHERE {where}", *args)
         if count is None:
             raise HTTPException(404, 'Call not found')
         rows = await pool.fetch(f"SELECT entry.value AS item FROM call_logs, jsonb_array_elements(COALESCE({field},'[]'::jsonb)) WITH ORDINALITY AS entry(value,n) WHERE {where} AND entry.n > ${len(args)+1} ORDER BY entry.n LIMIT ${len(args)+2}", *args, offset, limit)
         items = [json.loads(r['item']) if isinstance(r['item'], str) else r['item'] for r in rows]
-        result = bounded_page(items, offset, count, max(0,int(query.get('text_offset') or 0))); result['id'] = call_id; result['section'] = field
+        result = bounded_page(items, offset, count, text_offset); result['id'] = call_id; result['section'] = field
         return result
     total = await pool.fetchval(f'SELECT count(*) FROM call_logs WHERE {where}', *args)
     rows = await pool.fetch(f"""SELECT id,caller_number,direction,started_at,ended_at,end_reason,

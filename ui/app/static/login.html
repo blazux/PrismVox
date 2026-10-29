@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Sign in · PrismVox</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/login.css">
+  <script src="/static/login.js" defer></script>
+</head>
+<body class="login-page">
+  <div class="login-shell">
+    <header class="login-header">
+      <a class="login-brand" href="/login" aria-label="PrismVox"><img src="/static/logo.svg" width="52" height="26" alt=""><span>Prism<span class="brand-vox">Vox</span></span></a>
+      <div class="login-preferences">
+        <button type="button" id="language-toggle" aria-label="Français">FR</button>
+        <span class="preference-divider" aria-hidden="true"></span>
+        <button type="button" id="theme-toggle" aria-label="Switch theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="login-main">
+      <section class="login-story" aria-labelledby="story-title">
+        <p class="login-eyebrow"><span aria-hidden="true"></span><span data-i18n="eyebrow">VOICE &amp; TELEPHONY</span></p>
+        <h2 id="story-title"><span data-i18n="headline1">Every call</span><br> <span class="story-accent" data-i18n="headline2">matters.</span></h2>
+        <p class="story-description" data-i18n="description">Your agent picks up. You stay in the loop.</p>
+
+        <div class="voice-illustration" aria-hidden="true">
+          <div class="signal-label"><span data-i18n="signal">A voice. A conversation. A connection.</span><span class="signal-mark">↗</span></div>
+          <svg class="voice-signal" viewBox="0 0 490 132" fill="none">
+            <path class="signal-guide" d="M0 66H490M0 22H490M0 110H490"/>
+            <path class="signal-guide" d="M45 0V132M145 0V132M245 0V132M345 0V132M445 0V132"/>
+            <path class="signal-line" d="M0 66H50M440 66H490"/>
+            <g class="signal-bars" stroke-linecap="round" stroke-width="3">
+              <path d="M66 62v8M78 56v20M90 48v36M102 60v12M114 41v50M126 30v72M138 48v36M150 20v92M162 9v114M174 29v74M186 42v48M198 51v30M210 36v60M222 17v98M234 35v62M246 44v44M258 25v82M270 39v54M282 49v34M294 35v62M306 21v90M318 38v56M330 49v34M342 43v46M354 54v24M366 47v38M378 55v22M390 59v14M402 56v20M414 61v10M426 63v6"/>
+            </g>
+          </svg>
+          <div class="signal-caption"><span>PRISMVOX</span><span data-i18n="caption">Always an attentive ear.</span></div>
+        </div>
+      </section>
+
+      <section class="login-panel" aria-labelledby="login-title">
+        <div class="login-panel-heading">
+          <div class="login-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 10V7a4 4 0 0 1 8 0v3"/><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M12 14v3"/></svg></div>
+          <p class="panel-eyebrow" data-i18n="console">YOUR CONSOLE</p>
+          <h1 id="login-title" data-i18n="welcome">Welcome back.</h1>
+          <p class="login-intro" data-i18n="intro">Sign in to manage your reception.</p>
+        </div>
+        <form id="login-form" action="/auth/login" method="post">
+          <label for="username" data-i18n="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="256" placeholder="admin" value="{{USERNAME}}" required autofocus>
+          <label for="password" data-i18n="password">Password</label>
+          <div class="password-field">
+            <input id="password" name="password" type="password" autocomplete="current-password" maxlength="4096" required>
+            <button id="password-toggle" type="button" aria-label="Show password" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m4 3 16 18"/></svg>
+            </button>
+          </div>
+          <p id="login-status" class="login-status" role="status" aria-live="polite" data-error="{{ERROR}}"></p>
+          <button class="login-submit" type="submit"><span class="submit-label" data-i18n="submit">Sign in</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg><span class="login-spinner" aria-hidden="true"></span></button>
+          <noscript><p class="login-noscript">{{ERROR_MESSAGE}}</p></noscript>
+        </form>
+        <p class="login-help" data-i18n="help">Use the credentials for your PrismVox instance.</p>
+      </section>
+    </main>
+
+    <footer class="login-footer"><span data-i18n="footer">Your reception, connected.</span><a href="https://github.com/blazux/PrismVox" target="_blank" rel="noopener noreferrer" data-i18n="source">Open source · MIT</a></footer>
+  </div>
+</body>
+</html>

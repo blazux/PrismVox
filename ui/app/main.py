@@ -28,13 +28,14 @@ from pathlib import Path
 from typing import Optional
 
 import aiohttp
+import browser_auth
 import secret_store
 import voice_config
 import embedding_config
 import history_archive
 import asyncpg
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -197,7 +198,8 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 # instructions, the outbound-call API makes the trunk dial arbitrary numbers, and
 # the MCP API attaches arbitrary tool servers. Two independent credentials:
 #
-#   UI_PASSWORD    — HTTP Basic (user UI_USER, default "admin") on the whole UI.
+#   UI_PASSWORD    — browser login (user UI_USER, default "admin") and HTTP Basic
+#                    for existing API clients.
 #   AGENT_API_KEY  — Bearer token on the public agent surface (agent-chat + the
 #                    OpenAI shim), which is meant to be fronted by N8N rather
 #                    than a browser. Basic auth is accepted there too.
@@ -210,6 +212,8 @@ AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
 # Public agent surface: authenticated by AGENT_API_KEY when it is set.
 AGENT_PATHS = ("/api/agent-chat", "/v1/chat/completions", "/v1/models")
+
+browser_auth.install(app, static_dir, lambda: (UI_USER, UI_PASSWORD))
 
 
 def _basic_ok(header: str) -> bool:
@@ -232,6 +236,15 @@ def _bearer_ok(header: str) -> bool:
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     header = request.headers.get("authorization", "")
+    if path in browser_auth.PUBLIC_PATHS:
+        return await call_next(request)
+    browser_session = browser_auth.session_ok(request, UI_USER, UI_PASSWORD)
+    if browser_session and not _basic_ok(header):
+        if not browser_auth.cookie_write_ok(request):
+            return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if path in AGENT_PATHS or path.startswith("/api/agent-chat/"):
         # Either credential opens the agent surface (a browser session must be
         # able to use the "Tester l'agent" tab).
@@ -245,10 +258,14 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if _basic_ok(header):
         return await call_next(request)
-    return Response(
-        content='{"detail":"Unauthorized"}', status_code=401, media_type="application/json",
-        headers={"WWW-Authenticate": 'Basic realm="PrismVox"'},
-    )
+    if request.method in ("GET", "HEAD") and "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/login", status_code=303, headers={"Cache-Control": "no-store"})
+    headers = {"Cache-Control": "no-store"}
+    # Keep the Basic challenge for API clients, without opening the browser's
+    # native password dialog when a fetch notices an expired browser session.
+    if "sec-fetch-mode" not in request.headers and "application/json" not in request.headers.get("accept", ""):
+        headers["WWW-Authenticate"] = 'Basic realm="PrismVox"'
+    return JSONResponse({"detail": "Unauthorized"}, status_code=401, headers=headers)
 
 
 if not UI_PASSWORD:
@@ -308,26 +325,36 @@ DOCKED_PAGE = """<!doctype html>
 </head><body><main class="docked-shell">
   <div class="brand"><h1><img class="logo" src="/static/logo.svg" alt="">PrismVox</h1><span class="subtitle">Voice &amp; telephony</span></div>
   <span class="badge badge-ok">Connected to Prism</span>
-  <h2 style="margin-top:16px">Your reception workspace is in Prism</h2>
-  <p>Manage the switchboard, voices, greetings, directory and SIP trunk from
-  Prism’s telephony settings. Use the PrismVox workspace to talk to the reception agent and consult call history.</p>
+  <h2 style="margin-top:16px">Telephony is in Prism</h2>
+  <p>Open Prism’s Telephony app to talk to the reception agent, consult call history
+  and manage the switchboard, voices, greetings, directory and SIP trunk.</p>
   %s
+  <!--AUTH_ACTION-->
 </main></body></html>"""
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     if PRISM_URL:
-        from urllib.parse import urlsplit
+        from urllib.parse import urlsplit, urlencode, parse_qsl, urlunsplit
         # A container's internal address is not a browser-facing URL. Only offer
         # an explicit public link; docking itself needs no extra configuration.
         public = PRISM_PUBLIC_URL
         parsed = urlsplit(public)
-        link = (f'<a class="primary" href="{html.escape(public, quote=True)}">Open Prism</a>'
+        query = dict(parse_qsl(parsed.query))
+        query['app'] = 'telephony'
+        public = urlunsplit(parsed._replace(path=parsed.path or '/', query=urlencode(query), fragment=''))
+        link = (f'<a class="primary" href="{html.escape(public, quote=True)}">Open Telephony</a>'
                 if parsed.scheme in ("http", "https") and parsed.netloc
                 else '<p>Open your Prism instance to configure telephony.</p>')
-        return DOCKED_PAGE % link
-    return (static_dir / "index.html").read_text()
+        page = DOCKED_PAGE % link
+    else:
+        page = (static_dir / "index.html").read_text()
+    logout = ('<form action="/auth/logout" method="post" class="logout-form">'
+              '<button class="theme-toggle" type="submit">'
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H5v14h4M14 8l4 4-4 4M9 12h9"/></svg>'
+              '<span>Sign out</span></button></form>') if UI_PASSWORD else ''
+    return page.replace('<!--AUTH_ACTION-->', logout)
 
 
 voice_config.install(app, _pool_or_error)
@@ -1203,7 +1230,12 @@ async def tts_set_voice(body: TTSVoiceSelect):
             f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/voice", json={"name": body.name},
             timeout=aiohttp.ClientTimeout(total=10),
         ) as r:
-            return JSONResponse(await r.json(), status_code=r.status)
+            data = await r.json()
+            if 200 <= r.status < 300:
+                # Calls snapshot this setting; changing the service's active
+                # voice must also move subsequent calls to a different cache key.
+                await _pool_or_error().execute("INSERT INTO config(key,value) VALUES('voice_service_voice',$1) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=NOW()", body.name)
+            return JSONResponse(data, status_code=r.status)
 
 
 @app.post("/api/tts/voices")
@@ -1309,7 +1341,7 @@ async def _supervision_complete(pool, messages, tools=None, max_tokens=1200):
     backend_url, headers = await _backend_for(pool)
     payload = {"model": await _model_for(pool), "messages": messages,
                "max_tokens": max_tokens, "temperature": 0.3,
-               "chat_template_kwargs": {"enable_thinking": False}}
+               "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}}
     if tools:
         payload.update(tools=tools, tool_choice="auto")
     async with aiohttp.ClientSession() as client:
@@ -1806,7 +1838,7 @@ async def agent_chat(body: AgentChatMessage):
                     "messages":            messages,
                     "temperature":         0.7,
                     "max_tokens":          512,
-                    "chat_template_kwargs": {"enable_thinking": False},
+                    "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False},
                 }
                 if tools:
                     payload["tools"] = tools
@@ -1908,7 +1940,7 @@ async def _agent_run_tool_loop(messages: list[dict], tools: list, routing: dict,
             "messages":             messages,
             "temperature":          0.7,
             "max_tokens":           512,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False},
         }
         if tools:
             payload["tools"] = tools
@@ -1959,7 +1991,7 @@ async def _sglang_stream(messages: list[dict], model: str = ""):
         "temperature":          0.7,
         "max_tokens":           512,
         "stream":               True,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False},
     }
     async with aiohttp.ClientSession() as s:
         async with s.post(
@@ -2155,7 +2187,7 @@ async def voice_test(
                 f"{backend_url}/chat/completions",
                 json={"model": await _model_for(pool), "messages": messages,
                       "temperature": 1.0, "top_p": 0.95, "max_tokens": 256,
-                      "chat_template_kwargs": {"enable_thinking": False}},
+                      "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}},
                 headers=backend_headers,
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as r:

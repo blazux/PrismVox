@@ -182,11 +182,13 @@ func (c *Client) GetResponse(
 	})
 
 	reqBody := map[string]interface{}{
-		"model":       c.Model,
-		"messages":    messages,
-		"temperature": 0.7,
-		"top_p":       0.9,
-		"max_tokens":  1024,
+		"model":                c.Model,
+		"messages":             messages,
+		"temperature":          0.7,
+		"top_p":                0.9,
+		"max_tokens":           1024,
+		"reasoning_effort":     "low",
+		"chat_template_kwargs": map[string]interface{}{"enable_thinking": true},
 	}
 	if len(tools) > 0 {
 		reqBody["tools"] = tools
@@ -258,6 +260,10 @@ func conversationText(messages []Message) string {
 func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interface{}) (string, []ToolCall, error) {
 	// Disable thinking for all non-streaming calls — model generates 1000+ thinking tokens
 	// with no benefit for short follow-ups, announcements, or summaries.
+	// Ollama's OpenAI endpoint uses reasoning_effort; vLLM uses template kwargs.
+	if _, ok := reqBody["reasoning_effort"]; !ok {
+		reqBody["reasoning_effort"] = "none"
+	}
 	if _, ok := reqBody["chat_template_kwargs"]; !ok {
 		reqBody["chat_template_kwargs"] = map[string]interface{}{"enable_thinking": false}
 	}
@@ -418,16 +424,15 @@ func (c *Client) streamInner(
 	messages = append(messages, map[string]interface{}{"role": "user", "content": userText})
 
 	reqBody := map[string]interface{}{
-		"model":       c.Model,
-		"messages":    messages,
-		"temperature": 0.7,
-		"top_p":       0.9,
-		"max_tokens":  1024,
-		"stream":      true,
-		// Disable thinking: Qwen3.x emits reasoning without an opening <think> tag,
-		// so the stream filter can't distinguish it from the spoken answer until the
-		// closing </think> — by then sentences have already been sent to TTS.
-		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
+		"model":            c.Model,
+		"messages":         messages,
+		"temperature":      0.7,
+		"top_p":            0.9,
+		"max_tokens":       1024,
+		"stream":           true,
+		"reasoning_effort": "low",
+		// Reasoning stays in the provider's private channel; only content is spoken.
+		"chat_template_kwargs": map[string]interface{}{"enable_thinking": true},
 	}
 	if len(tools) > 0 {
 		reqBody["tools"] = tools

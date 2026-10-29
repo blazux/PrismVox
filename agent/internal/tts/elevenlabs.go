@@ -18,6 +18,7 @@ import (
 func (c *Client) Configure(s voice.Settings) {
 	c.continuityMu.Lock()
 	c.continuity = nil
+	c.cachedSpeech = ""
 	c.continuityMu.Unlock()
 	c.settings = s
 	if s.TTSURL != "" {
@@ -46,6 +47,10 @@ func (c *Client) Stream(ctx context.Context, text string, emit func([]int16) err
 		}
 		return emit(audio.Float32ToInt16(audio.Resample(samples, rate, 8000)))
 	}
+	return c.streamCached(ctx, text, emit)
+}
+
+func (c *Client) streamElevenLabs(ctx context.Context, text string, emit func([]int16) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	body := map[string]any{"text": c.prepareText(text), "model_id": c.settings.TTSModel}
@@ -56,7 +61,9 @@ func (c *Client) Stream(ctx context.Context, text string, emit func([]int16) err
 	// client, and only reuse requests whose audio was completely consumed.
 	stitch := !strings.HasPrefix(c.settings.TTSModel, "eleven_v3")
 	if stitch {
-		if ids := c.previousSpeechRequests(); len(ids) > 0 {
+		if previous := c.previousCachedSpeech(); previous != "" {
+			body["previous_text"] = previous
+		} else if ids := c.previousSpeechRequests(); len(ids) > 0 {
 			body["previous_request_ids"] = ids
 		}
 	}
@@ -142,13 +149,34 @@ func (c *Client) previousSpeechRequests() []string {
 }
 
 func (c *Client) rememberSpeechRequest(id string) {
-	if id == "" {
-		return
-	}
 	c.continuityMu.Lock()
 	defer c.continuityMu.Unlock()
+	c.cachedSpeech = ""
+	if id == "" {
+		c.continuity = nil
+		return
+	}
 	c.continuity = append(c.continuity, speechRequest{id: id, at: time.Now()})
 	if len(c.continuity) > 3 {
 		c.continuity = c.continuity[len(c.continuity)-3:]
 	}
+}
+
+func (c *Client) previousCachedSpeech() string {
+	c.continuityMu.Lock()
+	defer c.continuityMu.Unlock()
+	return c.cachedSpeech
+}
+
+func (c *Client) rememberCachedSpeech(text string) {
+	c.continuityMu.Lock()
+	defer c.continuityMu.Unlock()
+	// Only the locally spoken text follows this call, never another call's
+	// provider request IDs. Bound the context sent with the next fresh synthesis.
+	c.continuity = nil
+	runes := []rune(text)
+	if len(runes) > 1000 {
+		runes = runes[len(runes)-1000:]
+	}
+	c.cachedSpeech = string(runes)
 }

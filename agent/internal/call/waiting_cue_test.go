@@ -2,9 +2,12 @@ package call
 
 import (
 	"context"
+	"encoding/binary"
+	"net"
 	"testing"
 	"time"
 
+	"phoneagent/internal/audio"
 	"phoneagent/internal/rtp"
 )
 
@@ -139,5 +142,111 @@ func TestLocalToolCompletionDisarmsPendingWaitingCue(t *testing.T) {
 	finish()
 	if cue.played.Load() {
 		t.Fatal("completed local tool left a pending waiting cue")
+	}
+}
+
+func TestWaitingCueFinishesBeforeReadyResponseOnRTPAndCallerCanInterrupt(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		name := "response-waits-for-complete-cue"
+		if interrupted {
+			name = "caller-interrupts-cue-and-response"
+		}
+		t.Run(name, func(t *testing.T) {
+			receiver, err := rtp.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiver.Start()
+			defer receiver.Stop()
+			peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Close()
+			packet := make([]byte, rtp.RTPHeaderSize+rtp.FrameBytes)
+			packet[0], packet[1] = 0x80, 118
+			if _, err := peer.WriteToUDP(packet, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: receiver.Port}); err != nil {
+				t.Fatal(err)
+			}
+
+			// Exactly 1.2 seconds / 60 RTP frames, with a distinct constant level
+			// so the receiving end can distinguish cue audio from the response.
+			cueSamples := make([]float32, rtp.OutFrameSamples*60)
+			for i := range cueSamples {
+				cueSamples[i] = 0.25
+			}
+			wav, err := audio.EncodeWAV(cueSamples, rtp.OutSampleRate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cue := &waitingCue{wav: wav, started: time.Now(), delay: time.Millisecond}
+			h := &Handler{channelID: "fixture", rtpReceiver: receiver, responseCue: cue}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			in := make(chan playChunk, 1)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				h.playQueued(ctx, h.channelID, h.withWaitCue(ctx, in))
+			}()
+
+			readSample := func() int16 {
+				t.Helper()
+				peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+				buf := make([]byte, 2000)
+				n, _, err := peer.ReadFromUDP(buf)
+				if err != nil || n < rtp.RTPHeaderSize+2 {
+					t.Fatalf("missing RTP audio: n=%d err=%v", n, err)
+				}
+				return int16(binary.BigEndian.Uint16(buf[rtp.RTPHeaderSize:]))
+			}
+			if sample := readSample(); sample < 4000 || sample > 12000 {
+				t.Fatal("first audio was not the waiting cue", sample)
+			}
+			response := make([]int16, rtp.OutFrameSamples*3)
+			for i := range response {
+				response[i] = 24000
+			}
+			// The answer becomes ready immediately after the first cue packet.
+			in <- playChunk{pcm: response, text: "Réponse prête."}
+			close(in)
+			if interrupted {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("waiting cue ignored caller interruption")
+				}
+				if receiver.PendingSamples() != 0 {
+					t.Fatal("cue or response remained queued after interruption")
+				}
+				return
+			}
+
+			cueFrames := 1
+			for {
+				sample := readSample()
+				if sample == 24000 {
+					break
+				}
+				if sample < 4000 || sample > 12000 {
+					t.Fatal("cue and response audio overlapped", sample)
+				}
+				cueFrames++
+			}
+			if cueFrames != 60 {
+				t.Fatalf("ready response cut the 1.2s cue short: got %d/60 frames", cueFrames)
+			}
+			for i := 0; i < 2; i++ {
+				if sample := readSample(); sample != 24000 {
+					t.Fatal("response did not follow continuously", sample)
+				}
+			}
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal("playback did not complete")
+			}
+		})
 	}
 }

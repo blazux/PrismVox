@@ -104,8 +104,8 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
         app.PRISM_URL = "http://prism:8080"
         app.PRISM_PUBLIC_URL = "https://prism.example.test"
         connected = await app.index()
-        self.assertIn('href="https://prism.example.test"', connected)
-        self.assertIn("Your reception workspace is in Prism", connected)
+        self.assertIn('href="https://prism.example.test/?app=telephony"', connected)
+        self.assertIn("Telephony is in Prism", connected)
         self.assertNotIn('href="http://prism:8080"', connected)
         app.PRISM_PUBLIC_URL = ""
         self.assertNotIn('href="http://prism:8080"', await app.index())

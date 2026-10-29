@@ -107,6 +107,7 @@ summary:hover { color:var(--text); }
 
     /* ── Sidebar footer / theme toggle ── */
     .sidebar-footer { padding:.7rem .55rem; border-top:1px solid var(--border); }
+    .logout-form { margin:0 0 8px; }
     .theme-toggle {
       display:flex; align-items:center; gap:.55rem; width:100%;
       background:none; border:1px solid var(--border); border-radius:var(--radius);

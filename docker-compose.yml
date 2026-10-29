@@ -45,6 +45,7 @@ services:
       - APP_HOST=agent
       - SOUNDS_DIR=/sounds
       - WAIT_CUE_WAV=${WAIT_CUE_WAV:-}
+      - WAIT_CUE_DIR=${WAIT_CUE_DIR:-}
       # Barge-in sustain threshold (ms of voiced speech). Raised from 800 to reduce
       # self-interruption from acoustic echo (agent hearing its own playback) —
       # echo accrues voiced frames continuously, so it reaches any threshold on a
@@ -82,6 +83,7 @@ services:
       - STT_URL=${STT_URL:-http://stt:9000}
       - STT_PROVIDER=${STT_PROVIDER:-elevenlabs}
       - TTS_PROVIDER=${TTS_PROVIDER:-elevenlabs}
+      - TTS_CACHE_DIR=${TTS_CACHE_DIR:-/var/cache/prismvox/tts}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
       - ELEVENLABS_BASE_URL=${ELEVENLABS_BASE_URL:-https://api.elevenlabs.io/v1}
       - ELEVENLABS_STT_MODEL=${ELEVENLABS_STT_MODEL:-scribe_v2_realtime}
@@ -110,6 +112,7 @@ services:
     volumes:
       - sounds:/sounds
       - secrets:/var/lib/prismvox:ro
+      - tts_cache:/var/cache/prismvox/tts
     depends_on:
       db:
         condition: service_healthy
@@ -149,7 +152,7 @@ services:
       - PRISM_URL=${PRISM_URL:-}
       - PRISM_PUBLIC_URL=${PRISM_PUBLIC_URL:-}
       - CORTEX_URL=${CORTEX_URL:-}
-      # Admin Basic authentication and a separate token for agent API clients.
+      # Browser login / API Basic authentication and a separate token for agent clients.
       - UI_USER=${UI_USER:-admin}
       - UI_PASSWORD=${UI_PASSWORD:-}
       - AGENT_API_KEY=${AGENT_API_KEY:-}
@@ -232,6 +235,7 @@ services:
       retries: 10
 
 volumes:
+  tts_cache:
   sounds:
   pgdata:
   asterisk_dynamic:

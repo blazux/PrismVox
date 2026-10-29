@@ -158,6 +158,9 @@ class VoiceSettingsTests(unittest.IsolatedAsyncioTestCase):
             seen.append(request.path)
             if request.path=='/health':return web.json_response({'status':'ok','engine':'melo','clone_enabled':False})
             if request.path=='/voices':return web.json_response({'voices':['fixture.wav'],'current':'fixture.wav'})
+            if request.path=='/voice':
+                name=(await request.json())['name']
+                return web.json_response({'ok':name!='missing.wav'},status=404 if name=='missing.wav' else 200)
             return web.Response(body=b'RIFFfixture',content_type='audio/wav')
         server=web.Application();server.router.add_route('*','/{path:.*}',service)
         runner=web.AppRunner(server);await runner.setup();site=web.TCPSite(runner,'127.0.0.1',0);await site.start()
@@ -168,6 +171,10 @@ class VoiceSettingsTests(unittest.IsolatedAsyncioTestCase):
             backend=await self.client.get('/api/tts/backend')
             self.assertEqual(backend.json(),{'backend':'melo','clone_enabled':False})
             self.assertEqual((await self.client.get('/api/tts/voices')).json()['current'],'fixture.wav')
+            self.assertEqual((await self.client.put('/api/tts/voice',json={'name':'other.wav'})).status_code,200)
+            self.assertEqual((await voice_config.settings(self.pool))['voice_service_voice'],'other.wav')
+            self.assertEqual((await self.client.put('/api/tts/voice',json={'name':'missing.wav'})).status_code,404)
+            self.assertEqual((await voice_config.settings(self.pool))['voice_service_voice'],'other.wav')
             self.assertEqual((await self.client.post('/api/tts/preview',json={'text':'fixture'})).status_code,200)
             upload=await self.client.post('/api/tts/voices',files={'file':('sample.webm',b'fixture','audio/webm')},data={'name':'Test voice'})
             self.assertEqual(upload.status_code,200,upload.text)
