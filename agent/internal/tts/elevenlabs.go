@@ -67,7 +67,7 @@ func (c *Client) streamElevenLabs(ctx context.Context, text string, emit func([]
 			body["previous_request_ids"] = ids
 		}
 	}
-	if c.settings.Language != "" {
+	if c.settings.Language != "" && !c.settings.AutoLanguage {
 		body["language_code"] = c.settings.Language
 	}
 	payload, _ := json.Marshal(body)

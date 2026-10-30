@@ -80,9 +80,10 @@ func (c *Client) cachePath(text, format string) string {
 	}
 	key, _ := json.Marshal(struct {
 		Version, Format, Provider, Endpoint, Model, Voice, Language string
+		AutoLanguage                                                bool
 		Text, Prepared, SpellWords, SpellExceptions, Credential     string
 		Stability                                                   *float64
-	}{"1", format, c.settings.TTSProvider, endpoint, model, voice, c.settings.Language,
+	}{"2", format, c.settings.TTSProvider, endpoint, model, voice, c.settings.Language, c.settings.AutoLanguage,
 		text, prepared, c.SpellWords, c.SpellExceptions, credential, c.settings.Stability})
 	hash := sha256.Sum256(key)
 	return filepath.Join(c.cacheDir, hex.EncodeToString(hash[:])+".audio")

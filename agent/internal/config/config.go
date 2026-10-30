@@ -4,20 +4,22 @@ package config
 import (
 	"context"
 	"log"
+	"phoneagent/internal/locale"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var defaults = map[string]string{
-	"system_prompt":          "Tu es la standardiste virtuelle de l'entreprise. Réponds en français, avec des phrases courtes : tes réponses sont lues à voix haute.",
-	"outbound_system_prompt": "Tu passes un appel téléphonique sortant pour le compte de l'entreprise. Phrases courtes, lues à voix haute, toujours en français. Accomplis la mission décrite dans la section « Mission », note les réponses avec take_message, puis termine l'appel avec end_call. Tu dois APPELER les outils, jamais seulement décrire l'action.",
-	"greeting":               "Bonjour, vous êtes bien au standard. Que puis-je faire pour vous ?",
+	"phrase_outbound_opening": "Hello, I'm calling on behalf of the company.",
+	"system_prompt":           "You are the company's virtual receptionist. Keep spoken replies short, with no markdown or lists. Adapt to the caller's language. Use search_knowledge_base before answering factual questions about the company and rely only on its results. Use transfer_call only when the caller asks to reach a listed contact. Use take_message to record a confirmed message. Execute tools for actions rather than merely announcing them. Never invent facts, contacts or successful outcomes. Finish with end_call only when the caller clearly finishes.",
+	"outbound_system_prompt":  "You are making a telephone call on behalf of the company. Keep spoken replies short and adapt to the other person's language. Complete the supplied mission, record confirmed information with take_message and finish with end_call when appropriate. Execute the tools rather than merely describing actions.",
+	"greeting":                "Hello, you've reached reception. How can I help you?",
 	// Greeting for a caller Prism recognises by their number. Spoken instead of the
 	// one above, before a single token is generated — a colleague should not be told
 	// they have reached the switchboard. One optional %s = their name; without it
 	// the line is spoken verbatim.
-	"greeting_known": "Bonjour %s, c'est l'assistant Prism. Je suis à l'écoute.",
+	"greeting_known": "Hello %s, this is your Prism assistant. I'm listening.",
 	"rag_enabled":    "true",
 	"mcp_enabled":    "false",
 
@@ -28,19 +30,19 @@ var defaults = map[string]string{
 	"sip_transfer_method": "bridge",
 
 	// Spoken phrases used by the call-control code (overridable via the config table).
-	"phrase_farewell":       "Au revoir, bonne journée !",
-	"phrase_hold":           "Un instant, je vérifie sa disponibilité.",
-	"phrase_transfer_now":   "Très bien, je lance le transfert.",
-	"phrase_connecting":     "%s a accepté l'appel, je lance la mise en relation.",
-	"phrase_ask_name":       "Quel nom dois-je annoncer ?",
-	"phrase_ask_reason":     "Quel est le motif de l'appel ?",
-	"phrase_still_there":    "Êtes-vous toujours en ligne ?",
-	"phrase_not_understood": "Pardon, je n'ai pas bien entendu. Est-ce possible de répéter ?",
+	"phrase_farewell":       "Goodbye, have a good day!",
+	"phrase_hold":           "One moment, I'll check their availability.",
+	"phrase_transfer_now":   "All right, I'll transfer you now.",
+	"phrase_connecting":     "%s has accepted the call. I'll connect you now.",
+	"phrase_ask_name":       "What name should I announce?",
+	"phrase_ask_reason":     "What is the call about?",
+	"phrase_still_there":    "Are you still on the line?",
+	"phrase_not_understood": "Sorry, I didn't catch that. Could you repeat it?",
 	// Short filler played to bridge the silence when a TTS take has to be regenerated.
-	"phrase_filler":          "Un instant.",
-	"phrase_unknown_contact": "Je suis désolée, je ne peux pas joindre %s. Puis-je prendre un message ?",
+	"phrase_filler":          "One moment.",
+	"phrase_unknown_contact": "I'm sorry, I can't reach %s. May I take a message?",
 	// Attended-transfer announcement to the recipient. Two %s: caller name, then reason.
-	"phrase_announce": "Bonjour, j'ai %s en ligne pour vous, à propos de : %s. Souhaitez-vous prendre l'appel ?",
+	"phrase_announce": "Hello, I have %s on the line about: %s. Would you like to take the call?",
 }
 
 // Config holds runtime agent configuration.
@@ -50,13 +52,15 @@ type Config struct {
 	RAGEnabled   bool
 	MCPEnabled   bool
 	// Raw holds all keys (including custom ones) for extensibility.
-	Raw map[string]string
+	Raw        map[string]string
+	Configured map[string]bool
 }
 
 // Load reads the config table and returns a populated Config.
 // If pool is nil, defaults are used.
 func Load(ctx context.Context, pool *pgxpool.Pool) (*Config, error) {
 	raw := make(map[string]string, len(defaults))
+	configured := map[string]bool{}
 	for k, v := range defaults {
 		raw[k] = v
 	}
@@ -71,6 +75,7 @@ func Load(ctx context.Context, pool *pgxpool.Pool) (*Config, error) {
 				var k, v string
 				if err := rows.Scan(&k, &v); err == nil {
 					raw[k] = v
+					configured[k] = true
 				}
 			}
 		}
@@ -82,6 +87,7 @@ func Load(ctx context.Context, pool *pgxpool.Pool) (*Config, error) {
 		RAGEnabled:   raw["rag_enabled"] == "true",
 		MCPEnabled:   raw["mcp_enabled"] == "true",
 		Raw:          raw,
+		Configured:   configured,
 	}, nil
 }
 
@@ -89,11 +95,13 @@ func Load(ctx context.Context, pool *pgxpool.Pool) (*Config, error) {
 // tests and for call paths that already hold the config table's contents.
 func FromMap(raw map[string]string) *Config {
 	merged := make(map[string]string, len(defaults)+len(raw))
+	configured := map[string]bool{}
 	for k, v := range defaults {
 		merged[k] = v
 	}
 	for k, v := range raw {
 		merged[k] = v
+		configured[k] = true
 	}
 	return &Config{
 		SystemPrompt: merged["system_prompt"],
@@ -101,6 +109,7 @@ func FromMap(raw map[string]string) *Config {
 		RAGEnabled:   merged["rag_enabled"] == "true",
 		MCPEnabled:   merged["mcp_enabled"] == "true",
 		Raw:          merged,
+		Configured:   configured,
 	}
 }
 
@@ -110,5 +119,8 @@ func (c *Config) Get(key string) string {
 	if v, ok := c.Raw[key]; ok && strings.TrimSpace(v) != "" {
 		return v
 	}
-	return defaults[key]
+	if value := defaults[key]; value != "" {
+		return value
+	}
+	return locale.Default("en", key)
 }

@@ -26,6 +26,7 @@ import (
 	"phoneagent/internal/db"
 	"phoneagent/internal/embeddings"
 	"phoneagent/internal/llm"
+	"phoneagent/internal/locale"
 	"phoneagent/internal/mcp"
 	"phoneagent/internal/rag"
 	"phoneagent/internal/rtp"
@@ -179,12 +180,12 @@ type Handler struct {
 	ragEnabled       bool // exposes the search_knowledge_base tool when true
 	groupShortSpeech bool // direct synthesis can preserve prosody across short replies
 
-	// fillerWav is a pre-synthesized short phrase played to bridge the silence while
-	// a slow/regenerating TTS take is in flight.
-	fillerWav   []byte
+	// fillerClips holds short phrases by language for slow TTS takes.
+	fillerClips map[string]playChunk
 	waitCueWav  []byte
 	waitCues    []waitingClip
 	responseCue *waitingCue
+	language    *callLocale
 	fillerMu    sync.Mutex
 	logID       int64
 	message     *string
@@ -396,9 +397,16 @@ func (h *Handler) Run(ctx context.Context) {
 		return
 	}
 	h.ttsClient.Configure(settings)
+	h.initLanguage(ctx, cfg, settings.Language, settings.AutoLanguage)
 	h.loadWaitCue()
 	h.groupShortSpeech = settings.TTSProvider == "elevenlabs"
 	h.sttClient.Configure(settings)
+	h.llmClient.SummaryLanguage = settings.Language
+	if value := cfg.Get("voice_summary_language"); value != "" {
+		h.llmClient.SummaryLanguage = value
+	} else if value := os.Getenv("VOICE_SUMMARY_LANGUAGE"); value != "" {
+		h.llmClient.SummaryLanguage = value
+	}
 	h.sttClient.Hotwords = cfg.Get("whisper_hotwords")
 
 	// Apply the DB-managed dictionary (UI → Dictionnaire) to this call's STT/TTS
@@ -491,12 +499,12 @@ func (h *Handler) Run(ctx context.Context) {
 
 	// Opening line: configured greeting for inbound, mission-driven for outbound,
 	// and a greeting by name for someone we recognise.
-	opening := cfg.Greeting
+	opening := h.phrase(cfg, "greeting")
 	switch {
 	case h.task != nil:
 		opening = h.outboundOpening(ctx, cfg)
 	case h.llmClient.CallerKnown && h.callerName != "":
-		opening = knownGreeting(cfg.Get("greeting_known"), h.callerName)
+		opening = knownGreeting(h.phrase(cfg, "greeting_known"), h.callerName)
 	}
 	if err := h.playText(ctx, opening); err != nil {
 		log.Printf("[%s] Greeting play error: %v", h.channelID, err)
@@ -536,7 +544,7 @@ func (h *Handler) outboundOpening(ctx context.Context, cfg *config.Config) strin
 	opening = strings.TrimSpace(StripGemmaThinking(opening))
 	if err != nil || opening == "" {
 		log.Printf("[%s] Outbound opening LLM error (%v) — using fallback", h.channelID, err)
-		return "Bonjour, je vous appelle de la part de l'entreprise."
+		return h.phrase(cfg, "phrase_outbound_opening")
 	}
 	return opening
 }
@@ -546,11 +554,10 @@ func (h *Handler) outboundOpening(ctx context.Context, cfg *config.Config) strin
 // its latency is hidden; the result (if any) is sent on out. On error or empty output
 // nothing is sent and the caller falls back to the configured phrase_announce.
 func (h *Handler) generateAnnouncement(ctx context.Context, cfg *config.Config, at *attendedTransferReq, out chan<- string) {
-	sys := "Tu es le standard téléphonique de l'entreprise. Tu viens d'appeler " + at.ContactName +
-		" pour lui annoncer un appel en attente et lui demander s'il souhaite le prendre. " +
-		"Formule une annonce orale courte et naturelle, en français, en une seule phrase lue à voix haute. Vouvoie cet interlocuteur. " +
-		"Termine en lui demandant s'il souhaite prendre l'appel. Ne te présente pas et ne te fais jamais passer pour l'appelant. " +
-		"Donne uniquement la phrase à dire, sans guillemets ni préambule."
+	sys := "You represent the company's reception and have called " + at.ContactName +
+		" to announce a waiting call. Form a single short spoken announcement in language " + h.primaryLanguage() +
+		". Address the recipient politely and formally, and ask whether they wish to take the call. " +
+		"Do not introduce yourself or impersonate the caller. Output only the spoken sentence, without quotes or preamble."
 	info := fmt.Sprintf("Appelant : %s.", at.CallerName)
 	if at.Reason != "" {
 		info = fmt.Sprintf("Appelant : %s. Objet de l'appel : %s.", at.CallerName, at.Reason)
@@ -578,30 +585,30 @@ func (h *Handler) generateAnnouncement(ctx context.Context, cfg *config.Config, 
 // them (see CLAUDE.md) — keeping it here means a prompt edit can never drop it.
 const toolRulesInbound = `
 
-# Outils (règles système — prioritaires sur toute autre instruction)
-Tu disposes des outils transfer_call, take_message et end_call. Pour transférer un appel, prendre un message ou raccrocher, tu DOIS APPELER l'outil correspondant dans le MÊME tour : n'annonce jamais une de ces actions sans l'exécuter (ne dis jamais « je vous transfère » sans appeler transfer_call). C'est l'appel de l'outil qui réalise l'action, pas ta phrase.
-- transfer_call : passe le NOM du contact tel qu'il apparaît dans l'annuaire. Contact marqué [blind] : appelle transfer_call immédiatement, sans question ni annonce préalable. Contact marqué [attended] : demande d'abord, en une seule question, le nom de l'appelant ET l'objet de l'appel, puis appelle transfer_call avec caller_name et reason. Si la personne demandée ne figure pas dans l'annuaire, ne tente aucun transfert : propose de prendre un message.
-- take_message : reformule le message pour confirmation, puis appelle l'outil pour l'enregistrer.
-- end_call : ne l'appelle QUE lorsque l'appelant a clairement indiqué qu'il a terminé. Ne raccroche jamais de ta propre initiative.
-N'invente jamais de contact ni d'information.`
+# Tool execution
+Use transfer_call, take_message and end_call to perform their actions in the same turn; never merely announce them.
+- transfer_call: use a unique name from the supplied directory. For [blind] contacts, call immediately without another question or announcement. For [attended] contacts, collect the caller's name and reason in one question, then pass caller_name and reason. If no contact matches, offer to take a message.
+- take_message: confirm the message before recording it.
+- end_call: only when the caller clearly finishes. Never end an ongoing conversation on your own.
+Do not invent contacts, facts or successful outcomes.`
 
 const toolRulesOutbound = `
 
-# Outils (règles système — prioritaires sur toute autre instruction)
-Tu disposes des outils take_message et end_call. Pour prendre un message ou raccrocher, tu DOIS APPELER l'outil correspondant dans le MÊME tour : n'annonce jamais l'action sans l'exécuter. Utilise take_message pour toute information à transmettre, en la reformulant pour confirmation. N'appelle end_call que lorsque l'objectif est atteint, que l'interlocuteur veut clairement arrêter, ou après avoir laissé un message sur un répondeur.`
+# Tool execution
+Use take_message to record confirmed information and end_call to finish the mission. An action requires its tool call in the same turn. End only when the mission is complete, the recipient clearly wants to stop, or a voicemail has been left.`
 
 // systemPrompt returns the effective system prompt: the receptionist prompt
 // for inbound calls, or the outbound prompt plus the task mission. In both cases
 // the matching non-editable tool-usage contract is appended (see toolRules*).
 func (h *Handler) systemPrompt(cfg *config.Config) string {
 	if h.task == nil {
-		prompt := cfg.SystemPrompt + toolRulesInbound
+		prompt := cfg.SystemPrompt + toolRulesInbound + h.languageContext(cfg)
 		if h.llmClient == nil || !h.llmClient.Docked() {
-			prompt += "\nVouvoie l'interlocuteur, même s'il te tutoie."
+			prompt += "\nAddress the other person politely and formally, even if they are informal."
 		}
 		return h.withMemory(prompt)
 	}
-	sp := cfg.Get("outbound_system_prompt") + "\nVouvoie l'interlocuteur, même s'il te tutoie." + "\n\n## Mission\n"
+	sp := cfg.Get("outbound_system_prompt") + h.languageContext(cfg) + "\nAddress the other person politely and formally, even if they are informal." + "\n\n## Mission\n"
 	if h.task.ContactName != "" {
 		sp += "Interlocuteur à joindre : " + h.task.ContactName + ".\n"
 	}
@@ -775,7 +782,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 					silentPrompts++
 					if silentPrompts > maxSilencePrompts {
 						log.Printf("[%s] Caller silent after %d re-prompts — hanging up", h.channelID, maxSilencePrompts)
-						h.sayAndHangup(ctx, cfg.Get("phrase_farewell"))
+						h.sayAndHangup(ctx, h.phrase(cfg, "phrase_farewell"))
 						return
 					}
 					log.Printf("[%s] Silence — re-prompting (%d/%d)", h.channelID, silentPrompts, maxSilencePrompts)
@@ -847,7 +854,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 				emptyReprompts++
 				log.Printf("[%s] Empty transcript on %.1fs speech — asking to repeat (%d/%d)",
 					h.channelID, duration, emptyReprompts, maxEmptyReprompts)
-				if err := h.playText(ctx, cfg.Get("phrase_not_understood")); err != nil {
+				if err := h.playText(ctx, h.phrase(cfg, "phrase_not_understood")); err != nil {
 					log.Printf("[%s] Reprompt play error: %v", h.channelID, err)
 				}
 				if h.rtpReceiver != nil {
@@ -859,6 +866,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 			continue
 		}
 		emptyReprompts = 0
+		h.acceptCallerText(ctx, transcript)
 		privacy.Logf("[%s] Transcript: %q", h.channelID, transcript)
 		h.turns = append(h.turns, map[string]string{"role": "caller", "text": transcript})
 
@@ -897,7 +905,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 		tLLM := time.Now()
 		h.responseCue = nil
 		if len(h.waitCueWav) > 0 || len(h.waitCues) > 0 {
-			h.responseCue = &waitingCue{wav: h.waitCueWav, clips: h.waitCues, started: tLLM, delay: 3 * time.Second}
+			h.responseCue = &waitingCue{wav: h.waitCueWav, clips: h.waitCues, selectClips: h.localWaitingClips, started: tLLM, delay: 3 * time.Second}
 		}
 
 		var firstPacket <-chan time.Time
@@ -911,6 +919,7 @@ func (h *Handler) captureLoop(ctx context.Context, cfg *config.Config) {
 			remoteTools.observe(event)
 			cue.observeTool(event)
 		})
+		h.llmClient.LanguageHint = h.languageContext(cfg)
 		sentCh, toolsCh, llmErrCh := h.llmClient.StreamResponse(
 			turnCtx,
 			h.systemPrompt(cfg),
@@ -1315,7 +1324,7 @@ func (h *Handler) handleToolCalls(
 				if c == nil {
 					privacy.Logf("[%s] transfer_call refused: %q not in the Prism directory", h.channelID, dest)
 					mcpResults = append(mcpResults, unknownContactResult(dest))
-					fallbackSpoken = append(fallbackSpoken, fmt.Sprintf(cfg.Get("phrase_unknown_contact"), dest))
+					fallbackSpoken = append(fallbackSpoken, renderPhrase(h.phrase(cfg, "phrase_unknown_contact"), dest))
 					continue
 				}
 				contactName, ext, transferType = c.Name, c.PhoneNumber, contacts.NormalizeTransferType(c.TransferType)
@@ -1334,7 +1343,7 @@ func (h *Handler) handleToolCalls(
 					// pas". Spelling out the near-match rule yields "Vouliez-vous
 					// parler à Jean-Marc Dupont ?", which is the whole point.
 					mcpResults = append(mcpResults, unknownContactResult(dest))
-					fallbackSpoken = append(fallbackSpoken, fmt.Sprintf(cfg.Get("phrase_unknown_contact"), dest))
+					fallbackSpoken = append(fallbackSpoken, renderPhrase(h.phrase(cfg, "phrase_unknown_contact"), dest))
 					continue
 				}
 				contactName, ext, transferType = c.Name, c.PhoneNumber, contacts.NormalizeTransferType(c.TransferType)
@@ -1344,7 +1353,7 @@ func (h *Handler) handleToolCalls(
 			default:
 				log.Printf("[%s] transfer_call refused: no directory available", h.channelID)
 				mcpResults = append(mcpResults, unknownContactResult(dest))
-				fallbackSpoken = append(fallbackSpoken, fmt.Sprintf(cfg.Get("phrase_unknown_contact"), dest))
+				fallbackSpoken = append(fallbackSpoken, renderPhrase(h.phrase(cfg, "phrase_unknown_contact"), dest))
 				continue
 			}
 
@@ -1358,7 +1367,7 @@ func (h *Handler) handleToolCalls(
 				mcpResults = append(mcpResults, fmt.Sprintf(
 					"Outil transfer_call : ÉCHEC. %s est dans l'annuaire mais son numéro n'est pas composable, "+
 						"le transfert n'a pas eu lieu. Dis-le à l'appelant et propose de prendre un message.", contactName))
-				fallbackSpoken = append(fallbackSpoken, fmt.Sprintf(cfg.Get("phrase_unknown_contact"), contactName))
+				fallbackSpoken = append(fallbackSpoken, renderPhrase(h.phrase(cfg, "phrase_unknown_contact"), contactName))
 				continue
 			}
 
@@ -1379,10 +1388,10 @@ func (h *Handler) handleToolCalls(
 				}
 				callerName, reason = keptName, keptReason
 				if callerName == "" {
-					callerName = h.collectCallerInfo(ctx, cfg.Get("phrase_ask_name"))
+					callerName = h.collectCallerInfo(ctx, h.phrase(cfg, "phrase_ask_name"))
 				}
 				if reason == "" {
-					reason = h.collectCallerInfo(ctx, cfg.Get("phrase_ask_reason"))
+					reason = h.collectCallerInfo(ctx, h.phrase(cfg, "phrase_ask_reason"))
 				}
 				h.attendedTransfer = &attendedTransferReq{
 					Destination: ext,
@@ -1391,7 +1400,7 @@ func (h *Handler) handleToolCalls(
 					Reason:      reason,
 				}
 				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "transfer_call", "args": args, "outcome": "queued"})
-				builtinSpoken = append(builtinSpoken, cfg.Get("phrase_hold"))
+				builtinSpoken = append(builtinSpoken, h.phrase(cfg, "phrase_hold"))
 			} else {
 				h.transferDest = ext
 				h.toolsUsed = append(h.toolsUsed, map[string]interface{}{
@@ -1399,7 +1408,7 @@ func (h *Handler) handleToolCalls(
 					"args":    map[string]interface{}{"destination": ext},
 					"outcome": "queued",
 				})
-				builtinSpoken = append(builtinSpoken, cfg.Get("phrase_transfer_now"))
+				builtinSpoken = append(builtinSpoken, h.phrase(cfg, "phrase_transfer_now"))
 			}
 			privacy.Logf("[%s] Transfer queued → %s/%s (%s) caller=%q reason=%q",
 				h.channelID, contactName, ext, transferType, callerName, reason)
@@ -1409,7 +1418,7 @@ func (h *Handler) handleToolCalls(
 			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "end_call"})
 			// Speak the farewell only if the model didn't already say goodbye itself.
 			if strings.TrimSpace(spokenText) == "" {
-				builtinSpoken = append(builtinSpoken, cfg.Get("phrase_farewell"))
+				builtinSpoken = append(builtinSpoken, h.phrase(cfg, "phrase_farewell"))
 			}
 			log.Printf("[%s] end_call requested by LLM", h.channelID)
 
@@ -1696,7 +1705,7 @@ func (h *Handler) executeAttendedTransfer(
 		if name == "" {
 			name = destination
 		}
-		if err := h.playText(ctx, fmt.Sprintf(cfg.Get("phrase_connecting"), name)); err != nil {
+		if err := h.playText(ctx, renderPhrase(h.phrase(cfg, "phrase_connecting"), name)); err != nil {
 			log.Printf("[%s] Connecting announce error: %v", h.channelID, err)
 		}
 		if err := h.bridgeTransfer(transferCID); err != nil {
@@ -1864,18 +1873,9 @@ func (h *Handler) attendedTransferInner(
 	default:
 		callerInfo = "Un appelant est en attente."
 	}
-	recipientPrompt := fmt.Sprintf(
-		"Tu réponds au téléphone pour le standard de l'entreprise. %s "+
-			"Tu viens de joindre %s pour lui annoncer cet appel et lui demander s'il souhaite le prendre. "+
-			"Tu parles au nom du standard : ne te fais JAMAIS passer pour l'appelant, et ne te présente pas "+
-			"(pas de « je suis la standardiste » ni « assistante virtuelle »). "+
-			"Réponds en une phrase courte. S'il pose une question, réponds avec les seules informations dont tu disposes. "+
-			"Ses réponses te parviennent par une reconnaissance vocale imparfaite : interprète phonétiquement les mots "+
-			"déformés (« passe le mois » veut dire « passe-le-moi », donc il accepte) et tolère un début de phrase coupé. "+
-			"Appelle l'outil accept_call s'il accepte de prendre l'appel, decline_call s'il refuse clairement. "+
-			"Si sa réponse est ambiguë ou incompréhensible, ne décide rien : redemande simplement s'il souhaite prendre l'appel.",
-		callerInfo, at.ContactName,
-	)
+	recipientPrompt := "You represent reception. " + callerInfo + " You have reached " + at.ContactName + " to ask whether they will take the waiting call. Use one short sentence, follow the recipient's language, and start in " + h.primaryLanguage() + ". Do not impersonate the caller or repeat an introduction. Use only supplied facts. Speech recognition may be imperfect: interpret context and phonetic similarity without inventing consent. Call accept_call for a clear acceptance, decline_call for a clear refusal. If unclear, ask again without deciding."
+	recipientSTT := h.sttClient.Clone()
+	recipientLanguage := h.primaryLanguage()
 	recipientTools := []map[string]interface{}{AcceptCallTool, DeclineCallTool}
 
 	// This dialog is colleague-facing — the transfer recipient tolerates a slower
@@ -1913,11 +1913,11 @@ func (h *Handler) attendedTransferInner(
 			switch {
 			case at.CallerName != "" && at.Reason != "":
 				// Nominal case is configurable (cfg key phrase_announce, two %s: name, reason).
-				say = fmt.Sprintf(cfg.Get("phrase_announce"), at.CallerName, at.Reason)
+				say = renderPhrase(h.phraseIn(cfg, "phrase_announce", recipientLanguage), at.CallerName, at.Reason)
 			case at.CallerName != "":
-				say = fmt.Sprintf("Bonjour, j'ai %s en ligne pour vous. Souhaitez-vous prendre l'appel ?", at.CallerName)
+				say = renderPhrase(h.phraseIn(cfg, "phrase_announce_name", recipientLanguage), at.CallerName)
 			default:
-				say = "Bonjour, j'ai un appelant en ligne pour vous. Souhaitez-vous prendre l'appel ?"
+				say = h.phraseIn(cfg, "phrase_announce_unknown", recipientLanguage)
 			}
 			// Prefer the LLM-generated announcement if it finished during the ring
 			// (generation was started in executeAttendedTransfer only when there's a
@@ -1963,12 +1963,15 @@ func (h *Handler) attendedTransferInner(
 				return decision
 			}
 			wav, _ := audio.EncodeWAV(audio.Int16ToFloat32(seg), rtp.SampleRate)
-			text, sttErr := h.sttClient.Transcribe(ctx, wav)
+			text, sttErr := recipientSTT.Transcribe(ctx, wav)
 			if sttErr != nil {
 				log.Printf("[%s] recipient STT error: %v", h.channelID, sttErr)
 				return decision
 			}
 			userMsg := strings.TrimSpace(text)
+			if code := locale.Detect(userMsg); code != "" {
+				recipientLanguage = code
+			}
 			if userMsg == "" {
 				return decision
 			}
@@ -1995,9 +1998,9 @@ func (h *Handler) attendedTransferInner(
 			if say == "" {
 				switch turnDecision {
 				case "accepted":
-					say = "Très bien, je vous le passe."
+					say = h.phraseIn(cfg, "phrase_recipient_accept", recipientLanguage)
 				case "rejected":
-					say = "Entendu, je vais l'informer."
+					say = h.phraseIn(cfg, "phrase_recipient_decline", recipientLanguage)
 				}
 			}
 
@@ -2034,18 +2037,22 @@ func (h *Handler) attendedTransferInner(
 
 // prepareFiller synthesizes the configured filler phrase once (called async at the
 // start of the capture loop) so it's ready to bridge the silence of a slow take.
-func (h *Handler) prepareFiller(cfg *config.Config) {
-	txt := strings.TrimSpace(cfg.Get("phrase_filler"))
+func (h *Handler) prepareFiller(ctx context.Context, cfg *config.Config) {
+	code := h.currentLanguage()
+	txt := strings.TrimSpace(h.phrase(cfg, "phrase_filler"))
 	if txt == "" {
 		return
 	}
-	w, err := h.ttsClient.Synthesize(txt)
+	w, err := h.ttsClient.Fork().SynthesizeContext(ctx, txt)
 	if err != nil {
 		log.Printf("[%s] filler synth error: %v", h.channelID, err)
 		return
 	}
 	h.fillerMu.Lock()
-	h.fillerWav = w
+	if h.fillerClips == nil {
+		h.fillerClips = map[string]playChunk{}
+	}
+	h.fillerClips[code] = playChunk{wav: w, text: txt}
 	h.fillerMu.Unlock()
 }
 
@@ -2073,12 +2080,12 @@ func (h *Handler) synthesizeFiller(ctx context.Context, text string, wavCh chan<
 	}
 
 	h.fillerMu.Lock()
-	f := h.fillerWav
+	filler := h.fillerClips[h.currentLanguage()]
 	h.fillerMu.Unlock()
-	if f != nil && ctx.Err() == nil {
+	if filler.wav != nil && ctx.Err() == nil {
 		log.Printf("[%s] slow TTS — playing filler", h.channelID)
 		select {
-		case wavCh <- playChunk{wav: f, text: "(filler)"}:
+		case wavCh <- filler:
 		case <-ctx.Done():
 		}
 	}
@@ -2092,25 +2099,25 @@ func (h *Handler) synthesizeFiller(ctx context.Context, text string, wavCh chan<
 
 // Re-prompts use the recent dialogue, not the switchboard persona: a recognised
 // caller may be speaking to their personal Prism agent. Keep that agent's register.
-const repromptPrompt = "Tu écris uniquement une relance après un silence au téléphone. Une seule phrase courte : rappelle le sujet en quelques mots, puis demande si la personne est encore en ligne. Ne réponds pas à sa demande, ne relance pas la collecte de renseignements, ne prétends pas passer un nouvel appel. Exemple de structure : « À propos du rendez-vous, toujours en ligne ? »."
+const repromptPrompt = "Write only a short spoken nudge after a silence. Briefly recall the current topic and ask whether the person is still on the line. Use the language of the recent conversation. Do not answer the request, restart information gathering or claim to place a new call."
 
 // generateReprompt falls back to the configured phrase on an empty history,
 // timeout, failed request or empty output. It never executes tools.
 func (h *Handler) generateReprompt(ctx context.Context, cfg *config.Config, attempt int) string {
-	fallback := cfg.Get("phrase_still_there")
+	fallback := h.phrase(cfg, "phrase_still_there")
 	if len(h.history) == 0 {
 		return fallback
 	}
 
-	prompt := repromptPrompt
+	prompt := repromptPrompt + " Use the language of the recent conversation. " + h.languageInstruction()
 	if h.llmClient.Docked() && h.task == nil {
-		prompt += " L'appelant est reconnu. Reprends le tutoiement ou le vouvoiement employé par l'assistant dans ses dernières réponses. Le fait d'être reconnu ne signifie pas qu'il faut tutoyer. En l'absence d'indice clair, vouvoie."
+		prompt += " The caller is recognized. Preserve the assistant's established register; recognition alone does not imply familiarity. Default to polite, formal language when unclear."
 	} else {
-		prompt += " L'appelant est inconnu : vouvoie-le toujours, même s'il tutoie l'assistant."
+		prompt += " The caller is unknown. Always use a polite, formal register, even if the caller is informal."
 	}
-	instruction := "La personne ne répond plus. Prononce maintenant la relance après ce silence."
+	instruction := "The person has gone silent. Say the nudge now, in the conversation language."
 	if attempt > 1 {
-		instruction += " C'est la deuxième relance : encore plus brève, formulée autrement."
+		instruction += " This is the second nudge: make it shorter and word it differently."
 	}
 
 	rctx, cancel := context.WithTimeout(ctx, repromptTimeout)
@@ -2143,7 +2150,7 @@ func (h *Handler) transcribeSegment(ctx context.Context, samples []int16) string
 		log.Printf("[%s] barge-in WAV encode error: %v", h.channelID, err)
 		return ""
 	}
-	transcript, err := h.sttClient.Transcribe(ctx, wavBytes)
+	transcript, err := h.sttClient.Clone().Transcribe(ctx, wavBytes)
 	if err != nil {
 		log.Printf("[%s] barge-in STT error: %v", h.channelID, err)
 		return ""
@@ -2182,6 +2189,7 @@ func (h *Handler) playText(ctx context.Context, text string) error {
 
 // synthesizeSpeech preserves the legacy WAV path for ARI and streams PCM to RTP.
 func (h *Handler) synthesizeSpeech(ctx context.Context, text string, out chan<- playChunk, onAudio func()) error {
+	h.observeSpeech(ctx, text)
 	emit := func(chunk playChunk) error {
 		if ctx.Err() != nil {
 			return ctx.Err()

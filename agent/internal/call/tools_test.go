@@ -71,14 +71,13 @@ func TestTranscriptEchoesText(t *testing.T) {
 }
 
 func TestIsSTTHallucination(t *testing.T) {
-	// Whisper emits these on noise/near-silence; on a French line they are echo.
-	// A ghost "Thank you" once made the agent say goodbye mid-call.
-	for _, s := range []string{"Thank you", "thank you.", "THANKS", "Bye!", "  Merci d'avoir regardé  "} {
+	// Discard video subtitles; ordinary acknowledgements remain valid speech.
+	for _, s := range []string{"  Merci d'avoir regardé  ", "sous-titrage société radio-canada"} {
 		if !isSTTHallucination(s) {
 			t.Errorf("isSTTHallucination(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"", "merci pour votre appel", "je voudrais parler à Vincent", "bye bye Vincent"} {
+	for _, s := range []string{"", "merci pour votre appel", "je voudrais parler à Vincent", "bye bye Vincent", "Thank you", "thank you.", "THANKS", "Bye!", "À bientôt"} {
 		if isSTTHallucination(s) {
 			t.Errorf("isSTTHallucination(%q) = true, want false", s)
 		}

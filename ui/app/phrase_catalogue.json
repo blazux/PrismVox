@@ -1,0 +1,42 @@
+{
+  "en": {
+    "greeting": "Hello, you've reached reception. How can I help you?",
+    "greeting_known": "Hello %s, this is your Prism assistant. I'm listening.",
+    "phrase_farewell": "Goodbye, have a good day!",
+    "phrase_hold": "One moment, I'll check their availability.",
+    "phrase_transfer_now": "All right, I'll transfer you now.",
+    "phrase_connecting": "%s has accepted the call. I'll connect you now.",
+    "phrase_ask_name": "What name should I announce?",
+    "phrase_ask_reason": "What is the call about?",
+    "phrase_still_there": "Are you still on the line?",
+    "phrase_not_understood": "Sorry, I didn't catch that. Could you repeat it?",
+    "phrase_filler": "One moment.",
+    "phrase_unknown_contact": "I'm sorry, I can't reach %s. May I take a message?",
+    "phrase_announce": "Hello, I have %s on the line about: %s. Would you like to take the call?",
+    "phrase_outbound_opening": "Hello, I'm calling on behalf of the company.",
+    "phrase_announce_name": "Hello, I have %s on the line for you. Would you like to take the call?",
+    "phrase_announce_unknown": "Hello, a caller is waiting for you. Would you like to take the call?",
+    "phrase_recipient_accept": "All right, I'll connect the caller.",
+    "phrase_recipient_decline": "Understood, I'll let the caller know."
+  },
+  "fr": {
+    "greeting": "Bonjour, vous êtes bien au standard. Que puis-je faire pour vous ?",
+    "greeting_known": "Bonjour %s, c'est l'assistant Prism. Je suis à l'écoute.",
+    "phrase_farewell": "Au revoir, bonne journée !",
+    "phrase_hold": "Un instant, je vérifie sa disponibilité.",
+    "phrase_transfer_now": "Très bien, je lance le transfert.",
+    "phrase_connecting": "%s a accepté l'appel, je lance la mise en relation.",
+    "phrase_ask_name": "Quel nom dois-je annoncer ?",
+    "phrase_ask_reason": "Quel est le motif de l'appel ?",
+    "phrase_still_there": "Êtes-vous toujours en ligne ?",
+    "phrase_not_understood": "Pardon, je n'ai pas bien entendu. Est-ce possible de répéter ?",
+    "phrase_filler": "Un instant.",
+    "phrase_unknown_contact": "Je suis désolée, je ne peux pas joindre %s. Puis-je prendre un message ?",
+    "phrase_announce": "Bonjour, j'ai %s en ligne pour vous, à propos de : %s. Souhaitez-vous prendre l'appel ?",
+    "phrase_outbound_opening": "Bonjour, je vous appelle de la part de l’entreprise.",
+    "phrase_announce_name": "Bonjour, j'ai %s en ligne pour vous. Souhaitez-vous prendre l'appel ?",
+    "phrase_announce_unknown": "Bonjour, un appelant est en attente pour vous. Souhaitez-vous prendre l'appel ?",
+    "phrase_recipient_accept": "Très bien, je vous le passe.",
+    "phrase_recipient_decline": "Entendu, je vais l'informer."
+  }
+}

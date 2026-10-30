@@ -16,6 +16,7 @@ import (
 	"phoneagent/internal/audio"
 	"phoneagent/internal/voice"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -99,8 +100,12 @@ func (c *Client) stream(ctx context.Context, input <-chan []int16) (string, erro
 	q.Set("model_id", "scribe_v2_realtime")
 	q.Set("audio_format", "pcm_16000")
 	q.Set("commit_strategy", "manual")
-	if c.settings.Language != "" {
+	if c.settings.Language != "" && !c.settings.AutoLanguage {
 		q.Set("language_code", c.settings.Language)
+	}
+	metadataRequested := c.settings.AutoLanguage && c.OnLanguage != nil
+	if metadataRequested {
+		q.Set("include_language_detection", "true")
 	}
 	u.RawQuery = q.Encode()
 	dial := websocket.Dialer{HandshakeTimeout: 5 * time.Second, Proxy: http.ProxyFromEnvironment}
@@ -111,36 +116,72 @@ func (c *Client) stream(ctx context.Context, input <-chan []int16) (string, erro
 	if err != nil {
 		return "", errors.New("STT realtime connection failed")
 	}
-	defer conn.Close()
+	var metadataTail atomic.Bool
+	defer func() {
+		if !metadataTail.Load() {
+			conn.Close()
+		}
+	}()
 	conn.SetReadLimit(1 << 20)
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
 		select {
 		case <-ctx.Done():
-			conn.Close()
+			if !metadataTail.Load() {
+				conn.Close()
+			}
 		case <-done:
 		}
 	}()
 	results := make(chan streamResult, 1)
 	go func() {
+		defer conn.Close()
+		committedText := ""
 		for {
 			var ev struct {
-				Type  string `json:"message_type"`
-				Text  string `json:"text"`
-				Error string `json:"error"`
+				Type     string `json:"message_type"`
+				Text     string `json:"text"`
+				Error    string `json:"error"`
+				Language string `json:"language_code"`
 			}
 			if err := conn.ReadJSON(&ev); err != nil {
+				if metadataTail.Load() {
+					return
+				}
 				results <- streamResult{err: errors.New("STT realtime stream interrupted")}
 				return
 			}
 			if ev.Error != "" {
+				if metadataTail.Load() {
+					return
+				}
 				results <- streamResult{err: errors.New("STT realtime provider rejected the request")}
 				return
 			}
 			switch ev.Type {
 			case "committed_transcript":
+				committedText = ev.Text
+				c.observeLanguage(ev.Language, ev.Text)
+				if metadataRequested && ev.Language == "" {
+					// Deliver speech immediately; collect optional delayed language
+					// metadata in a bounded tail without delaying the model turn.
+					metadataTail.Store(true)
+					conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+				}
 				results <- streamResult{text: strings.TrimSpace(ev.Text)}
+				if metadataTail.Load() {
+					continue
+				}
+				return
+			case "committed_transcript_with_timestamps":
+				if ev.Text == "" {
+					ev.Text = committedText
+				}
+				c.observeLanguage(ev.Language, ev.Text)
+				if !metadataTail.Load() {
+					results <- streamResult{text: strings.TrimSpace(ev.Text)}
+				}
 				return
 			case "session_started", "partial_transcript", "warning":
 			default:
@@ -236,7 +277,7 @@ func (c *Client) transcribeEleven(ctx context.Context, wav []byte) (string, erro
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("model_id", c.settings.STTModel)
-	if c.settings.Language != "" {
+	if c.settings.Language != "" && !c.settings.AutoLanguage {
 		_ = writer.WriteField("language_code", c.settings.Language)
 	}
 	f, err := writer.CreateFormFile("file", "audio.wav")
@@ -260,10 +301,12 @@ func (c *Client) transcribeEleven(ctx context.Context, wav []byte) (string, erro
 		return "", fmt.Errorf("ElevenLabs STT HTTP %d", resp.StatusCode)
 	}
 	var result struct {
-		Text string `json:"text"`
+		Text     string `json:"text"`
+		Language string `json:"language_code"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&result); err != nil {
 		return "", errors.New("invalid STT provider response")
 	}
+	c.observeLanguage(result.Language, result.Text)
 	return strings.TrimSpace(result.Text), nil
 }

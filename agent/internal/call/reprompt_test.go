@@ -71,13 +71,13 @@ func TestGenerateRepromptRequestAndFallbacks(t *testing.T) {
 				if strings.Contains(prompt, "SWITCHBOARD_PERSONA") || !strings.Contains(prompt, repromptPrompt) {
 					t.Errorf("wrong nudge persona: %q", prompt)
 				}
-				if tc.known != strings.Contains(prompt, "Reprends le tutoiement ou le vouvoiement") {
+				if tc.known != strings.Contains(prompt, "Preserve the assistant's established register") {
 					t.Errorf("wrong register rule: %q", prompt)
 				}
-				if !tc.known && !strings.Contains(prompt, "vouvoie-le toujours, même s'il tutoie") {
+				if !tc.known && !strings.Contains(prompt, "Always use a polite, formal register") {
 					t.Errorf("unknown caller must be addressed formally: %q", prompt)
 				}
-				if body.Messages[2].Content != "Tu veux le rendez-vous de demain ?" || !strings.Contains(body.Messages[3].Content.(string), "deuxième relance") {
+				if body.Messages[2].Content != "Tu veux le rendez-vous de demain ?" || !strings.Contains(body.Messages[3].Content.(string), "second nudge") {
 					t.Error("recent assistant reply or retry instruction lost")
 				}
 				w.WriteHeader(tc.status)

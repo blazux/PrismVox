@@ -31,6 +31,7 @@ import aiohttp
 import browser_auth
 import secret_store
 import voice_config
+import phrase_languages
 import embedding_config
 import history_archive
 import asyncpg
@@ -299,6 +300,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         );
     """)
     await history_archive.migrate(pool)
+    await phrase_languages.migrate(pool)
     await embedding_config.migrate(pool)
     await pool.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS context_start INTEGER NOT NULL DEFAULT 0")
     await pool.execute(
@@ -358,7 +360,7 @@ async def index():
     return page.replace('<!--AUTH_ACTION-->', logout)
 
 
-voice_config.install(app, _pool_or_error)
+voice_config.install(app, _pool_or_error, lambda pool: phrase_languages.schedule(pool, _supervision_complete))
 embedding_config.install(app, _pool_or_error)
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -396,6 +398,8 @@ async def update_config(body: ConfigUpdate):
                        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()""",
                     key, value,
                 )
+    if any(key.startswith('phrase_') or key.startswith('greeting') for key in values):
+        phrase_languages.schedule(pool, _supervision_complete)
     return {"ok": True}
 
 
@@ -2281,3 +2285,6 @@ def _chunk_text(text: str, max_chars: int = 1000, overlap: int = 100) -> list[st
         chunks.append(current)
 
     return chunks
+
+
+phrase_languages.install(app, _pool_or_error, _supervision_complete)

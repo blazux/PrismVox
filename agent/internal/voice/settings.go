@@ -18,6 +18,7 @@ type Settings struct {
 	ServiceAPIKey                                  string `json:"-"`
 	BaseURL, Language, STTModel, TTSModel, VoiceID string
 	ServiceSTTModel, ServiceTTSModel, ServiceVoice string
+	AutoLanguage                                   bool
 	// Nil preserves the provider's stored voice settings; zero is a valid override.
 	Stability *float64
 }
@@ -39,7 +40,8 @@ func Load(raw map[string]string) (Settings, error) {
 		TTSURL:          value("voice_tts_url", "TTS_URL", "http://tts:8000/synthesize"),
 		BaseURL:         value("voice_base_url", "ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1"),
 		APIKey:          value("voice_api_key", "ELEVENLABS_API_KEY", ""),
-		Language:        value("voice_language", "ELEVENLABS_LANGUAGE", "fr"),
+		Language:        value("voice_language", "ELEVENLABS_LANGUAGE", "en"),
+		AutoLanguage:    value("voice_auto_language", "VOICE_AUTO_LANGUAGE", "true") != "false",
 		STTModel:        value("voice_stt_model", "ELEVENLABS_STT_MODEL", "scribe_v2_realtime"),
 		TTSModel:        value("voice_tts_model", "ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5"),
 		VoiceID:         value("voice_id", "ELEVENLABS_VOICE_ID", ""),

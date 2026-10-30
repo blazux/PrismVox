@@ -17,7 +17,11 @@ const style=document.createElement('link');style.rel='stylesheet';style.href=pre
 <label id="stt-service">STT API URL<input id="voice_stt_url" type="url" placeholder="http://stt:9000"></label>
 <label id="tts-service">TTS API URL<input id="voice_tts_url" type="url" placeholder="http://tts:8000/synthesize"></label>
 </div>
-<label style="margin-top:8px">Language<input id="voice_language" maxlength="3" placeholder="fr — empty for automatic detection"></label>
+<label style="margin-top:8px">Default / greeting language<input id="voice_language" maxlength="3" placeholder="en"></label>
+<label>Conversation language<select id="voice_auto_language"><option value="true">Adapt to the caller</option><option value="false">Keep the default language</option></select></label>
+<label>Call summary language<input id="voice_summary_language" maxlength="3" placeholder="Same as the default language"></label>
+<label>Preload fallback languages<input id="voice_phrase_languages" placeholder="en,fr"></label>
+<div class="row"><button type="button" id="prepare-phrases">Prepare fallback translations</button><span id="phrase-status" role="status"></span></div>
 <fieldset id="external-settings" hidden><legend>Self-hosted APIs</legend><div class="grid">
 <label id="external-stt-model">Recognition model<input id="voice_service_stt_model" placeholder="Model ID, if required by your server"></label>
 <label id="external-tts-model">Speech model<input id="voice_service_tts_model" placeholder="Model ID from your server"></label>
@@ -39,7 +43,7 @@ const style=document.createElement('link');style.rel='stylesheet';style.href=pre
 <small class="hint">Changes apply to new calls. Current calls keep their voice settings.</small>
 </form>
 <script>
-const fields=['voice_stt_provider','voice_tts_provider','voice_stt_url','voice_tts_url','voice_language','voice_stt_model','voice_tts_model','voice_id','voice_stability','voice_service_stt_model','voice_service_tts_model','voice_service_voice'];
+const fields=['voice_stt_provider','voice_tts_provider','voice_stt_url','voice_tts_url','voice_language','voice_auto_language','voice_summary_language','voice_phrase_languages','voice_stt_model','voice_tts_model','voice_id','voice_stability','voice_service_stt_model','voice_service_tts_model','voice_service_voice'];
 const $=id=>document.getElementById(id);let current={},busy=false;
 function visibility(){const stt=$('voice_stt_provider').value==='elevenlabs',tts=$('voice_tts_provider').value==='elevenlabs';$('stt-service').hidden=stt;$('tts-service').hidden=tts;$('eleven-settings').hidden=!(stt||tts);$('stt-model').hidden=!stt;$('tts-model').hidden=!tts;$('tts-voice').hidden=!tts;$('tts-stability').hidden=!tts;const extSTT=$('voice_stt_provider').value==='openai',extTTS=$('voice_tts_provider').value==='openai';$('external-settings').hidden=!(extSTT||extTTS);$('external-stt-model').hidden=!extSTT;$('external-tts-model').hidden=!extTTS;$('external-voice').hidden=!extTTS;}
 function values(){return Object.fromEntries([...fields,'voice_api_key','voice_service_api_key'].map(k=>[k,$(k).value]));}
@@ -51,6 +55,7 @@ async function load(){lock(true);try{render(await api('GET','/voice'));$('save-s
 $('voice-form').addEventListener('input',()=>{$('save-status').textContent='Unsaved changes';visibility();});
 $('connect').onclick=async()=>{if(busy)return;const draft=values();lock(true);$('connection-status').textContent='Connecting…';try{const data=await api('POST','/voice/connect',{values:draft});$('speech-models').replaceChildren(...data.models.map(m=>new Option(m.name,m.id)));options(data.voices,draft.voice_id);$('connection-status').textContent=data.notice || 'Connected. Choose a model and voice, then save.';}catch(e){$('connection-status').textContent=e.message;}finally{lock(false);}};
 $('voice-form').onsubmit=async e=>{e.preventDefault();if(busy)return;const draft=values();lock(true);$('save-status').textContent='Saving…';try{render(await api('PUT','/voice',{values:draft}));$('save-status').textContent='Saved · applies to new calls';for(const name of ['prismvox','prismconnect'])parent.postMessage({type:name+'-voice-saved'},location.origin);}catch(e){$('save-status').textContent=e.message;}finally{lock(false);}};
+$('prepare-phrases').onclick=async()=>{if(busy)return;lock(true);$('phrase-status').textContent='Preparing saved phrases…';try{const languages=$('voice_phrase_languages').value.split(/[\s,]+/).filter(Boolean);const data=await api('POST','/voice/phrases/prepare',{languages});$('phrase-status').textContent='Ready: '+data.ready.join(', ')+(data.failed.length?' · Unavailable: '+data.failed.join(', '):'');}catch(e){$('phrase-status').textContent=e.message}finally{lock(false)}};
 $('reset').onclick=load;
 new ResizeObserver(()=>{for(const name of ['prismvox','prismconnect'])parent.postMessage({type:name+'-voice-height',height:document.body.scrollHeight+8},location.origin)}).observe(document.body);
 load();

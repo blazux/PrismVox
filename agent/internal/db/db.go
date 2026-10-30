@@ -225,6 +225,8 @@ func FinalizeCallLog(
 }
 
 const ownershipMigration = `
+CREATE TABLE IF NOT EXISTS voice_phrase_translations(source_hash TEXT NOT NULL, language TEXT NOT NULL, phrases JSONB NOT NULL, PRIMARY KEY(source_hash,language));
+
  ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
  ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
  ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS owner_id BIGINT;

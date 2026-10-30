@@ -18,6 +18,7 @@ type waitingCue struct {
 	spoken        atomic.Bool
 	played        atomic.Bool
 	clips         []waitingClip
+	selectClips   func() []waitingClip
 	lookups       atomic.Int32
 	lookupMu      sync.Mutex
 	remoteLookups map[string]bool

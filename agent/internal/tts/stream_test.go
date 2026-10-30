@@ -110,6 +110,40 @@ func TestFrenchDictionary(t *testing.T) {
 	}
 }
 
+func TestAdaptiveSpeechDoesNotForceTheDefaultLanguage(t *testing.T) {
+	var languages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Language string `json:"language_code"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		languages = append(languages, body.Language)
+		w.Write([]byte{1, 0})
+	}))
+	defer server.Close()
+	c := New()
+	s := voice.Settings{TTSProvider: "elevenlabs", BaseURL: server.URL, VoiceID: "fixture", Language: "en", AutoLanguage: true}
+	c.Configure(s)
+	c.SpellWords = "VoIP"
+	english := "Please check the VoIP connection before calling again."
+	if c.prepareText(english) != english {
+		t.Fatal("French letter names inserted into English speech")
+	}
+	if err := c.Stream(context.Background(), english, func([]int16) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	s.AutoLanguage = false
+	c.Configure(s)
+	if err := c.Stream(context.Background(), english, func([]int16) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(languages, []string{"", "en"}) {
+		t.Fatalf("adaptive/fixed language contract: %v", languages)
+	}
+}
+
 func TestSpeechContinuityIsBoundedAndPrivateToCall(t *testing.T) {
 	var bodies []struct {
 		Previous []string           `json:"previous_request_ids"`

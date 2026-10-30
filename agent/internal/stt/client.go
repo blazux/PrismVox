@@ -10,18 +10,45 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"phoneagent/internal/locale"
 	"phoneagent/internal/voice"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Client calls the STT transcription service.
 type Client struct {
-	settings voice.Settings
-	Hotwords string
-	url      string
-	http     *http.Client
+	settings   voice.Settings
+	Hotwords   string
+	url        string
+	http       *http.Client
+	OnLanguage func(string, string)
 }
+
+func (c *Client) observeLanguage(code, text string) {
+	if c.OnLanguage == nil {
+		return
+	}
+	letters := 0
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			letters++
+		}
+	}
+	if letters < 12 {
+		return
+	}
+	if code = locale.Normalize(code); code == "" {
+		code = locale.Detect(text)
+	}
+	if code != "" {
+		c.OnLanguage(code, strings.TrimSpace(text))
+	}
+}
+
+// Side legs and echo probes must not change the caller's language.
+func (c *Client) Clone() *Client { copy := *c; copy.OnLanguage = nil; return &copy }
 
 // New creates a client for an optional local or external speech service.
 func New() *Client {
@@ -36,7 +63,7 @@ func New() *Client {
 }
 
 // Transcribe sends wavBytes (16kHz mono PCM_16 WAV) to the STT service and returns
-// the recognised French text.
+// the recognised text.
 func (c *Client) Transcribe(ctx context.Context, wavBytes []byte) (string, error) {
 	if c.settings.STTProvider == "elevenlabs" {
 		return c.transcribeEleven(ctx, wavBytes)
@@ -62,7 +89,7 @@ func (c *Client) Transcribe(ctx context.Context, wavBytes []byte) (string, error
 			_ = mw.WriteField("model", c.settings.ServiceSTTModel)
 		}
 		_ = mw.WriteField("response_format", "json")
-		if c.settings.Language != "" {
+		if c.settings.Language != "" && !c.settings.AutoLanguage {
 			_ = mw.WriteField("language", c.settings.Language)
 		}
 		if c.Hotwords != "" {
@@ -103,5 +130,6 @@ func (c *Client) Transcribe(ctx context.Context, wavBytes []byte) (string, error
 	if err := json.Unmarshal(data, &result); err != nil {
 		return "", fmt.Errorf("stt decode: %w", err)
 	}
+	c.observeLanguage(result.Language, result.Text)
 	return strings.TrimSpace(result.Text), nil
 }

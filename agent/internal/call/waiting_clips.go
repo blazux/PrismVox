@@ -18,6 +18,8 @@ type waitingClip struct {
 	File       string `json:"file"`
 	Text       string `json:"text"`
 	LookupOnly bool   `json:"lookup_only,omitempty"`
+	Language   string `json:"language,omitempty"`
+	Neutral    bool   `json:"neutral,omitempty"`
 	wav        []byte
 	key        string
 }
@@ -43,6 +45,16 @@ func loadWaitingClips(dir string) ([]waitingClip, error) {
 	seen := make(map[string]bool)
 	for i := range clips {
 		clip := &clips[i]
+		// Legacy packs were produced in French. Only language-free vocalizations
+		// can be shared across languages without a declared pack language.
+		if clip.Language == "" && !clip.Neutral {
+			switch strings.Trim(strings.ToLower(clip.Text), " .…!?") {
+			case "hmm", "hmmm", "mmh", "mmmh":
+				clip.Neutral = true
+			default:
+				clip.Language = "fr"
+			}
+		}
 		if !filepath.IsLocal(clip.File) || filepath.Base(clip.File) != clip.File || strings.TrimSpace(clip.Text) == "" || seen[clip.File] {
 			return nil, fmt.Errorf("invalid or duplicate waiting clip")
 		}
@@ -110,8 +122,12 @@ func (r *waitingRotation) choose(clips []waitingClip, lookup bool) waitingClip {
 }
 
 func (c *waitingCue) clip() playChunk {
-	if len(c.clips) > 0 {
-		clip := sharedWaitingRotation.choose(c.clips, c.lookups.Load() > 0)
+	clips := c.clips
+	if c.selectClips != nil {
+		clips = c.selectClips()
+	}
+	if len(clips) > 0 {
+		clip := sharedWaitingRotation.choose(clips, c.lookups.Load() > 0)
 		if len(clip.wav) > 0 {
 			return playChunk{wav: clip.wav, text: clip.Text}
 		}

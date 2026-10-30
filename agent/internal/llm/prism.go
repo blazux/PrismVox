@@ -83,11 +83,15 @@ func (c *Client) streamPrism(ctx context.Context, userText string, sentCh chan<-
 	// in silence. Identity/personality are unchanged; only the form is.
 	// Prism streams initial dashboard state first (container_status, file_tree,
 	// tools_list, chat_history…) which we simply skip.
+	gatewayContext := append([]string(nil), c.GatewayContext...)
+	if c.LanguageHint != "" {
+		gatewayContext = append(gatewayContext, c.LanguageHint)
+	}
 	if err := conn.WriteJSON(map[string]interface{}{
 		"type":            "chat",
 		"channel":         "voice",
 		"content":         userText,
-		"gateway_context": c.GatewayContext,
+		"gateway_context": gatewayContext,
 	}); err != nil {
 		return fmt.Errorf("prism send: %w", err)
 	}

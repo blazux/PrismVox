@@ -23,7 +23,10 @@ DEFAULTS = {
     'voice_stt_url': ('STT_URL', 'http://stt:9000'),
     'voice_tts_url': ('TTS_URL', 'http://tts:8000/synthesize'),
     'voice_api_key': ('ELEVENLABS_API_KEY', ''),
-    'voice_language': ('ELEVENLABS_LANGUAGE', 'fr'),
+    'voice_language': ('ELEVENLABS_LANGUAGE', 'en'),
+    'voice_auto_language': ('VOICE_AUTO_LANGUAGE', 'true'),
+    'voice_summary_language': ('VOICE_SUMMARY_LANGUAGE', ''),
+    'voice_phrase_languages': ('VOICE_PHRASE_LANGUAGES', 'en,fr'),
     'voice_stt_model': ('ELEVENLABS_STT_MODEL', 'scribe_v2_realtime'),
     'voice_tts_model': ('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'),
     'voice_id': ('ELEVENLABS_VOICE_ID', ''),
@@ -76,6 +79,15 @@ def validate(cfg, *, complete=True):
             raise HTTPException(400, 'Service URLs must use HTTP or HTTPS without embedded credentials')
     if len(cfg['voice_language']) > 3:
         raise HTTPException(400, 'Use a two- or three-letter language code, or leave it empty for automatic detection')
+    if cfg['voice_auto_language'] not in ('true','false'):
+        raise HTTPException(400, 'Choose automatic or fixed conversation language')
+    if cfg['voice_auto_language']=='false' and not cfg['voice_language']:
+        raise HTTPException(400,'Enter a default language for fixed-language calls')
+    import re
+    for code in [cfg['voice_language'],cfg['voice_summary_language']]:
+        if code and not re.fullmatch('[a-zA-Z]{2,3}',code):raise HTTPException(400,'Use a two- or three-letter language code')
+    codes=[code for code in re.split(r'[\s,]+',cfg['voice_phrase_languages']) if code]
+    if len(codes)>32 or any(not re.fullmatch('[a-zA-Z]{2}',code) for code in codes):raise HTTPException(400,'Use up to 32 two-letter fallback language codes')
     if 'elevenlabs' in (cfg['voice_stt_provider'], cfg['voice_tts_provider']):
         if not cfg['voice_api_key']:
             raise HTTPException(400, 'Enter your ElevenLabs API key')
@@ -175,7 +187,7 @@ async def preview(cfg, text):
     payload = {'text': text[:200], 'model_id': cfg['voice_tts_model']}
     if cfg.get('voice_stability'):
         payload['voice_settings'] = {'stability': float(cfg['voice_stability'])}
-    if cfg['voice_language']:
+    if cfg['voice_language'] and cfg['voice_auto_language']=='false':
         payload['language_code'] = cfg['voice_language']
     pcm = await request(cfg, 'POST', '/text-to-speech/' + quote(cfg['voice_id'], safe='') +
                         '/stream?output_format=pcm_8000', json=payload)
@@ -207,7 +219,7 @@ async def external_request(cfg, method, kind, path, **kwargs):
         raise HTTPException(502, 'Could not reach the speech service') from None
 
 
-def install(app, pool_getter):
+def install(app, pool_getter, on_change=None):
     @app.get('/api/voice')
     async def get_voice():
         return await settings(pool_getter())
@@ -224,6 +236,7 @@ def install(app, pool_getter):
                     value = secret_store.encrypt(cfg[key], key) if key in SECRET_FIELDS else cfg[key]
                     await conn.execute('''INSERT INTO config(key,value,updated_at) VALUES($1,$2,NOW())
                         ON CONFLICT(key) DO UPDATE SET value=$2,updated_at=NOW()''', key, value)
+        if on_change:on_change(pool)
         return await settings(pool)
 
     @app.post('/api/voice/connect')

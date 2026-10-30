@@ -32,6 +32,12 @@ type Client struct {
 	SpellExceptions string
 }
 
+// Fork shares provider and cache settings, but never speech continuity.
+// Preparing an unplayed phrase must not become previous spoken text.
+func (c *Client) Fork() *Client {
+	return &Client{settings: c.settings, URL: c.URL, http: c.http, cacheDir: c.cacheDir, SpellWords: c.SpellWords, SpellExceptions: c.SpellExceptions}
+}
+
 // New creates a client for the configured speech service.
 func New() *Client {
 	u := os.Getenv("TTS_URL")

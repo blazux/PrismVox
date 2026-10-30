@@ -94,6 +94,7 @@ func TestCacheSeparatesEffectiveVoiceSettingsAndAccounts(t *testing.T) {
 		func(c *Client) { c.settings.VoiceID = "other-voice" },
 		func(c *Client) { c.settings.TTSModel = "other-model" },
 		func(c *Client) { c.settings.Language = "en" },
+		func(c *Client) { c.settings.AutoLanguage = true },
 		func(c *Client) { c.settings.Stability = &zero },
 		func(c *Client) { c.settings.APIKey = "other-account" },
 		func(c *Client) { c.settings.BaseURL += "/other-endpoint" },

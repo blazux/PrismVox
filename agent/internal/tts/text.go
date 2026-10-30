@@ -2,6 +2,7 @@ package tts
 
 import (
 	"os"
+	"phoneagent/internal/locale"
 	"regexp"
 	"strings"
 	"unicode"
@@ -11,7 +12,11 @@ var letters = []string{"a", "bé", "cé", "dé", "e", "effe", "gé", "ache", "i"
 var wordToken = regexp.MustCompile(`[\pL\pN_]+`)
 
 func (c *Client) prepareText(text string) string {
-	if c.settings.Language != "fr" {
+	code := c.settings.Language
+	if c.settings.AutoLanguage {
+		code = locale.Detect(text)
+	}
+	if locale.Normalize(code) != "fr" {
 		return text
 	}
 	split := func(s string) []string { return strings.Fields(strings.ReplaceAll(s, ",", " ")) }

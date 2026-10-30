@@ -148,13 +148,46 @@ In **Settings → Voice & greeting → Speech providers**:
 4. Use the voice preview in Settings → Voice & greeting to hear the selected voice.
 
 Defaults are `scribe_v2_realtime` for recognition and `eleven_flash_v2_5` for
-synthesis, with French as the language. Change the language, agent persona,
-greeting and fixed phrases together for other callers.
+synthesis, with English as the default greeting language. Existing saved personas,
+greetings and phrases are preserved when upgrading.
 
 **Connect** loads the available models and voices; **Save** persists the settings.
 If Models Read is unavailable, your selected model is retained and the console
 explains how to enable the full catalogue. A blank API key input preserves the
 saved key. Changes apply to new calls, not calls already in progress.
+
+### Conversation languages
+
+New installations start in English. **Default / greeting language** selects the
+initial language; **Adapt to the caller** lets recognition and the agent follow
+another language during the call, including an explicit request to switch.
+**Keep the default language** pins recognition and conversation to that language.
+Use a multilingual speech model for automatic switching. Language support and
+pronunciation still depend on the selected recognition, speech and chat models.
+
+Silence prompts, transfers and spoken replies follow the conversation. Brief acknowledgements
+and names retain the established language. Transfer recipients have a separate
+conversation and do not change the caller’s language. **Call summary language**
+selects the operator’s language; blank uses the default language. Transcripts retain
+the original words.
+
+**Preload fallback languages** accepts comma-separated two-letter codes such as
+`en,fr,es`. Save settings and use **Prepare fallback translations** before calls.
+The preparation uses the configured Vox model for customized phrases. It stores
+translated templates, not caller conversations. Standard English and French
+fallbacks work without a model. Configuration edits produce a new cache identity;
+old translations cannot replace an edited phrase. Translation failures are shown
+as unavailable and do not prevent saving configuration.
+
+Other detected languages can prepare their templates in the background. Until a
+translation is ready, available generic phrases are used; an unavailable phrase
+is omitted instead of spoken in another language. Preload languages that need
+fallback announcements during a model outage. Speech audio is generated on demand
+and cached with its voice, model and language settings.
+
+Waiting-clip entries can declare `language` (for example `en` or `fr`) or
+`neutral: true` for a language-free vocalization. Legacy worded packs are treated
+as French. Clips in another language are excluded; neutral clips remain usable.
 
 **Voice stability** accepts 0–1: lower values allow more vocal variation, higher
 values favour consistency. Leave it empty to use the voice's provider setting.

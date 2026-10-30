@@ -148,15 +148,13 @@ func StripGemmaThinking(text string) string {
 }
 
 // sttHallucinations are stock phrases Whisper emits on noise/near-silence (its
-// training data ends videos with them). On a French line, an English "Thank you"
-// out of a barge-in segment is echo, not the caller.
+// training data ends videos with them). Ordinary acknowledgements in any
+// language are accepted; acoustic and transcript echo checks handle playback.
 var sttHallucinations = map[string]bool{
-	"thank you": true, "thanks": true, "thank you very much": true,
-	"you": true, "bye": true,
 	"sous-titres réalisés par la communauté d'amara.org": true,
 	"sous-titrage société radio-canada":                  true,
 	"merci d'avoir regardé cette vidéo":                  true, "merci d'avoir regardé": true,
-	"c'est la fin de la vidéo": true, "à bientôt": true,
+	"c'est la fin de la vidéo": true,
 }
 
 // isSTTHallucination reports whether a transcript is one of Whisper's known
