@@ -28,6 +28,11 @@ func New(baseURL, user, pass string) *Client {
 		pass:    pass,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
+			// ARI has one configured destination. A redirected DELETE may become a
+			// GET; its eventual 200 would not prove the requested action succeeded.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
@@ -109,7 +114,7 @@ func (c *Client) LiveChannelIDs() (map[string]struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if status >= 400 {
+	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("ARI GET /channels: status %d", status)
 	}
 	var chans []struct {
@@ -137,7 +142,7 @@ func (c *Client) Delete(path string) error {
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body) //nolint:errcheck
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("ARI DELETE %s: status %d", path, resp.StatusCode)
 	}
 	return nil
@@ -149,7 +154,7 @@ func (c *Client) PostJSON(path string, v interface{}) (map[string]interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	if status >= 400 {
+	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("ARI POST %s: status %d body=%s", path, status, string(data))
 	}
 	if len(data) == 0 {

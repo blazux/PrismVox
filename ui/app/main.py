@@ -11,6 +11,7 @@ REST API + static HTML for:
 import base64
 import asyncio
 import datetime
+import hashlib
 import html
 import io
 import json
@@ -34,6 +35,7 @@ import voice_config
 import phrase_languages
 import embedding_config
 import history_archive
+import prism_integration
 import asyncpg
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
@@ -74,6 +76,8 @@ def _llm_headers() -> dict:
 
 async def _model_for(pool) -> str:
     """Resolve the shared Vox model, retaining the existing inbound setting."""
+    if linked := await prism_integration.inference(pool):
+        return linked[2]
     try:
         v = await pool.fetchval("SELECT value FROM config WHERE key=$1", "llm_model_standard")
         if v and v.strip():
@@ -84,6 +88,8 @@ async def _model_for(pool) -> str:
 
 
 async def _backend_for(pool):
+    if linked := await prism_integration.inference(pool):
+        return linked[:2]
     override = await pool.fetchval("SELECT value FROM config WHERE key=$1", "llm_url_standard")
     endpoint = (override or '').strip().rstrip('/') or LLM_BASE_URL.rstrip('/')
     # A local service must never receive the deployment gateway's key.
@@ -130,7 +136,7 @@ SIP_KEYS = list(SIP_ENV_DEFAULTS.keys())
 # be handed to anyone who can reach the UI (stolen SIP credentials = billed calls
 # under our number). They stay write-only — the UI posts SECRET_SENTINEL back when
 # the operator did not retype the secret, and the stored value is kept.
-SECRET_KEYS = ("sip_password", "voice_api_key", "voice_service_api_key", "embedding_api_key")
+SECRET_KEYS = ("sip_password", "voice_api_key", "voice_service_api_key", "embedding_api_key", "prism_token")
 SECRET_SENTINEL = "__unchanged__"
 
 
@@ -173,6 +179,7 @@ async def lifespan(app: FastAPI):
             logger.info("DB connected")
             await _ensure_schema(_pool)
             await secret_store.migrate(_pool)
+            await prism_integration.migrate(_pool)
             await _seed_sip_config(_pool)
             await _seed_dict_config(_pool)
             await _seed_llm_config(_pool)
@@ -300,6 +307,13 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         );
     """)
     await history_archive.migrate(pool)
+    await pool.execute("""
+        ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS creation_request_id TEXT;
+        ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS creation_payload_hash TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS call_tasks_creation_request_idx
+        ON call_tasks (prism_instance, audience, (COALESCE(owner_id, -1)), creation_request_id)
+        WHERE creation_request_id IS NOT NULL;
+    """)
     await phrase_languages.migrate(pool)
     await embedding_config.migrate(pool)
     await pool.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS context_start INTEGER NOT NULL DEFAULT 0")
@@ -310,13 +324,8 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
 
 # ── Serve UI ──────────────────────────────────────────────────────────────────
 
-# PRISM_URL set = this Vox is docked, and Prism owns the operator surface: the
-# persona, the greeting, the phrases, the voices, the trunk and the directory are
-# all edited there, writing straight through to this stack's database.
-#
-# So the console retires — but only the console. Every /api/… route below stays
-# up, because that is exactly what Prism's /api/vox/* proxy calls to do the
-# editing. Taking the API down with the page would cut the branch it sits on.
+# Prism owns the operator surface when the saved connection is reachable.
+# Its proxy still uses these APIs; /console remains available for recovery.
 PRISM_URL = os.getenv("PRISM_URL", "") or os.getenv("CORTEX_URL", "")
 PRISM_PUBLIC_URL = os.getenv("PRISM_PUBLIC_URL", "")
 
@@ -332,17 +341,23 @@ DOCKED_PAGE = """<!doctype html>
   schedule outbound calls and talk to the reception agent. Configure the line
   in Prism’s Settings in personal mode or Admin in shared mode.</p>
   %s
+  <p><a href="/console">Open local configuration</a></p>
   <!--AUTH_ACTION-->
 </main></body></html>"""
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    if PRISM_URL:
+    bootstrap = prism_integration.defaults()
+    bootstrap.update(prism_url=PRISM_URL, prism_public_url=PRISM_PUBLIC_URL,
+                     prism_enabled='true' if PRISM_URL else 'false')
+    connection = await prism_integration.settings(_pool, reveal=True, bootstrap=bootstrap)
+    state = await prism_integration.status(connection)
+    if state['connected']:
         from urllib.parse import urlsplit, urlencode, parse_qsl, urlunsplit
         # A container's internal address is not a browser-facing URL. Only offer
         # an explicit public link; docking itself needs no extra configuration.
-        public = PRISM_PUBLIC_URL
+        public = connection['prism_public_url']
         parsed = urlsplit(public)
         query = dict(parse_qsl(parsed.query))
         query['app'] = 'telephony'
@@ -353,6 +368,14 @@ async def index():
         page = DOCKED_PAGE % link
     else:
         page = (static_dir / "index.html").read_text()
+        if connection['enabled']:
+            banner = ('<div class="card" role="status"><strong>Prism connection unavailable</strong><p>'
+                      + html.escape(state['detail']) + '</p><a href="/console?settings=connection">Repair the connection</a></div>')
+            page = page.replace('<main class="main">', '<main class="main">' + banner)
+    return _operator_page(page)
+
+
+def _operator_page(page):
     logout = ('<form action="/auth/logout" method="post" class="logout-form">'
               '<button class="theme-toggle" type="submit">'
               '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H5v14h4M14 8l4 4-4 4M9 12h9"/></svg>'
@@ -360,8 +383,14 @@ async def index():
     return page.replace('<!--AUTH_ACTION-->', logout)
 
 
+@app.get('/console', response_class=HTMLResponse)
+async def recovery_console():
+    return _operator_page((static_dir / 'index.html').read_text())
+
+
 voice_config.install(app, _pool_or_error, lambda pool: phrase_languages.schedule(pool, _supervision_complete))
 embedding_config.install(app, _pool_or_error)
+prism_integration.install(app, _pool_or_error)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -383,7 +412,7 @@ async def update_config(body: ConfigUpdate):
     # it would round-trip a blank and wipe them). Secrets are set via PUT /api/sip.
     if {"llm_model_oncall", "llm_url_oncall"} & body.values.keys():
         raise HTTPException(400, 'Vox uses one model. Use llm_model_standard and llm_url_standard.')
-    values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS and k not in voice_config.KEYS and k not in embedding_config.KEYS}
+    values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS and k not in voice_config.KEYS and k not in embedding_config.KEYS and k not in prism_integration.KEYS}
     for key in ('llm_url_standard',):
         if values.get(key, '').strip():
             parsed = urlparse(values[key].strip())
@@ -770,6 +799,7 @@ class MCPCreate(BaseModel):
     command: list[str] = []
     url: str = ""
     auth_token: str = ""
+    enabled: bool = True
 
 
 @app.post("/api/mcp", status_code=201)
@@ -780,8 +810,8 @@ async def create_mcp(body: MCPCreate):
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
-                "INSERT INTO mcp_servers (name, type, command, url) VALUES ($1,$2,$3,$4) RETURNING id",
-                body.name, body.type, body.command or None, body.url or None,
+                "INSERT INTO mcp_servers (name, type, command, url, enabled) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+                body.name, body.type, body.command or None, body.url or None, body.enabled,
             )
             if body.auth_token:
                 await conn.execute("UPDATE mcp_servers SET auth_token=$1 WHERE id=$2",
@@ -794,6 +824,50 @@ async def toggle_mcp(server_id: int, enabled: bool):
     pool = _pool_or_error()
     await pool.execute("UPDATE mcp_servers SET enabled=$1 WHERE id=$2", enabled, server_id)
     return {"ok": True}
+
+
+class MCPUpdate(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    url: str | None = None
+    command: list[str] | None = None
+    auth_token: str = ''
+    clear_auth_token: bool = False
+    enabled: bool | None = None
+
+
+@app.put('/api/mcp/{server_id}')
+async def update_mcp(server_id: int, body: MCPUpdate):
+    pool = _pool_or_error()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow('SELECT name,type,url,command,auth_token,enabled FROM mcp_servers WHERE id=$1 FOR UPDATE', server_id)
+            if row is None:
+                raise HTTPException(404, 'MCP server not found')
+            values = dict(row)
+            for key in ('name', 'type', 'url', 'command', 'enabled'):
+                value = getattr(body, key)
+                if value is not None:
+                    values[key] = value.strip() if isinstance(value, str) else value
+            if not values['name'] or values['type'] not in ('stdio', 'sse', 'http'):
+                raise HTTPException(400, 'Enter a server name and supported MCP transport')
+            if values['type'] != 'stdio':
+                try:
+                    parsed = urlparse(values['url'] or '')
+                    parsed.port
+                    valid = parsed.scheme in ('http', 'https') and parsed.hostname and parsed.username is None and parsed.password is None and not parsed.fragment
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise HTTPException(400, 'MCP URL must use HTTP or HTTPS without embedded credentials')
+            if body.auth_token.strip():
+                values['auth_token'] = secret_store.encrypt(body.auth_token.strip(), f'mcp:{server_id}')
+            if body.clear_auth_token:
+                values['auth_token'] = ''
+            await conn.execute('''UPDATE mcp_servers SET name=$2,type=$3,url=$4,command=$5,
+                auth_token=$6,enabled=$7 WHERE id=$1''', server_id, values['name'], values['type'],
+                values['url'], values['command'], values['auth_token'], values['enabled'])
+    return {'ok': True}
 
 
 @app.delete("/api/mcp/{server_id}")
@@ -966,12 +1040,26 @@ async def list_call_tasks(request: Request, limit: int = 100, offset: int = 0):
                       ELSE 2
                     END,
                     CASE WHEN status IN ('calling','pending') THEN scheduled_at END ASC,
-                    updated_at DESC
+                    updated_at DESC, id DESC
            LIMIT ${len(args)+1} OFFSET ${len(args)+2}""",
         *args, limit, offset,
     )
-    total = await pool.fetchval(f"SELECT COUNT(*) FROM call_tasks WHERE {where}",*args)
-    return {"total": total, "offset": offset, "items": [dict(r) for r in rows]}
+    totals = await pool.fetchrow(f"""SELECT COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status='pending') AS pending_total FROM call_tasks WHERE {where}""", *args)
+    return {"total": totals['total'], "pending_total": totals['pending_total'],
+            "offset": offset, "items": [dict(r) for r in rows]}
+
+
+@app.get('/api/calls/{task_id}')
+async def get_call_task(task_id: int, request: Request):
+    args = [task_id]
+    where = history_archive.audience_clause(history_archive.scope_from_request(request), args)
+    row = await _pool_or_error().fetchrow(f'''SELECT id, phone_number, contact_name, mission,
+        scheduled_at, status, attempts, max_attempts, result_summary, call_log_id,
+        created_by, created_at, updated_at FROM call_tasks WHERE id=$1 AND {where}''', *args)
+    if row is None:
+        raise HTTPException(404, 'Call task not found')
+    return dict(row)
 
 
 class CallTaskCreate(BaseModel):
@@ -980,6 +1068,7 @@ class CallTaskCreate(BaseModel):
     contact_name: str = ""
     scheduled_at: Optional[datetime.datetime] = None
     max_attempts: int = 3
+    request_id: Optional[str] = None
 
 
 @app.post("/api/calls", status_code=201)
@@ -995,13 +1084,33 @@ async def create_call_task(body: CallTaskCreate, request: Request):
     if not scope.get('admin') and scope.get('owner') is None and not scope.get('standard'):
         raise HTTPException(403, 'No call scope is available')
     audience='personal' if scope.get('owner') is not None else 'standard'
+    if body.request_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", body.request_id, flags=re.ASCII):
+        raise HTTPException(400, "request_id must contain 1–128 ASCII letters, digits, dots, underscores, colons or hyphens")
+    # Hash the creation intent, not mutable task state or the generated NOW().
+    # The unique key uses only the authenticated creation audience/owner scope.
+    when = body.scheduled_at
+    if when is not None and when.tzinfo is not None:
+        when = when.astimezone(datetime.timezone.utc)
+    payload = dict(phone_number=body.phone_number.strip(),
+                   contact_name=body.contact_name.strip() or None,
+                   mission=body.mission.strip(),
+                   scheduled_at=when.isoformat() if when is not None else None,
+                   max_attempts=body.max_attempts)
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest() if body.request_id is not None else None
     row = await pool.fetchrow(
-        """INSERT INTO call_tasks (phone_number, contact_name, mission, scheduled_at, max_attempts, created_by,audience,prism_instance,owner_id)
-           VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, 'ui',$6,$7,$8)
+        """INSERT INTO call_tasks (phone_number, contact_name, mission, scheduled_at, max_attempts, created_by,
+                                   audience, prism_instance, owner_id, creation_request_id, creation_payload_hash)
+           VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, 'ui', $6, $7, $8, $9, $10)
+           ON CONFLICT (prism_instance, audience, (COALESCE(owner_id, -1)), creation_request_id)
+           WHERE creation_request_id IS NOT NULL
+           DO UPDATE SET creation_request_id=call_tasks.creation_request_id
+           WHERE call_tasks.creation_payload_hash=EXCLUDED.creation_payload_hash
            RETURNING id""",
-        body.phone_number.strip(), body.contact_name.strip() or None,
-        body.mission.strip(), body.scheduled_at, body.max_attempts, audience, scope.get("instance", ""), scope.get("owner"),
+        payload['phone_number'], payload['contact_name'], payload['mission'], body.scheduled_at,
+        payload['max_attempts'], audience, scope.get("instance", ""), scope.get("owner"), body.request_id, digest,
     )
+    if row is None:
+        raise HTTPException(409, "This request_id was already used for a different call request")
     return {"id": row["id"]}
 
 
@@ -1026,7 +1135,8 @@ async def retry_call_task(task_id: int, request: Request):
     args=[task_id];where=history_archive.audience_clause(history_archive.scope_from_request(request),args)
     result = await pool.execute(
         f"""UPDATE call_tasks
-           SET status='pending', scheduled_at=NOW(), attempts=0, updated_at=NOW()
+           SET status='pending', scheduled_at=NOW(), attempts=0,
+               result_summary=NULL, call_log_id=NULL, updated_at=NOW()
            WHERE id=$1 AND {where} AND status IN ('done', 'no_answer', 'failed', 'cancelled')""",
         *args,
     )
@@ -1065,8 +1175,8 @@ async def health():
         results.update(tts="error", stt="error")
 
     try:
-        endpoint, _ = await _backend_for(_pool_or_error())
-        results["llm"] = await _http_health(endpoint.removesuffix('/v1') + '/health')
+        endpoint, headers = await _backend_for(_pool_or_error())
+        results["llm"] = await _model_health(endpoint, headers)
         results["model"] = await _model_for(_pool_or_error())
     except Exception:
         results["llm"] = "error"
@@ -1169,6 +1279,19 @@ async def _http_health(url: str) -> str:
                 return "ok" if r.status < 400 else f"http_{r.status}"
     except Exception:
         return "unreachable"
+
+
+async def _model_health(endpoint: str, headers: dict) -> str:
+    """Probe the compatible API without generating text or assuming /health."""
+    try:
+        async with aiohttp.ClientSession() as client:
+            async with client.get(endpoint.rstrip('/') + '/models', headers=headers,
+                                  allow_redirects=False, timeout=aiohttp.ClientTimeout(total=3)) as response:
+                if response.status in (404, 405):
+                    return 'configured'  # Model listing is optional for some gateways.
+                return 'ok' if response.status == 200 else f'http_{response.status}'
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return 'unreachable'
 
 
 # ── TTS voice management (proxy to the tts service) ──────────────────────────
@@ -1313,17 +1436,33 @@ async def tts_delete_voice(name: str):
 
 class TTSPreview(BaseModel):
     text: str = "Hello, thank you for calling. How can I help you?"
+    voice: str = ""
+    name: str = ""  # Compatibility with the voice-selection API.
 
 
 @app.post("/api/tts/preview")
 async def tts_preview(body: TTSPreview):
-    """Synthesize a short sample with the current voice and return the WAV."""
+    """Synthesize a sample without changing the saved or service-wide voice."""
     cfg = await voice_config.settings(_pool_or_error(), reveal=True)
+    selected = body.voice or body.name
+    if selected:
+        if cfg['voice_tts_provider'] == 'elevenlabs':
+            voices = await voice_config.request(cfg, 'GET', '/voices')
+            voice = next((item for item in voices.get('voices', [])
+                          if selected in (item['voice_id'], f"{item.get('name', 'Voice')} [{item['voice_id']}]")), None)
+            if voice is None:
+                raise HTTPException(404, 'Voice not found')
+            cfg['voice_id'] = voice['voice_id']
+        else:
+            cfg['voice_service_voice'] = selected
     if cfg['voice_tts_provider'] in ('elevenlabs','openai'):
         return Response(await voice_config.preview(cfg, body.text), media_type='audio/wav')
+    payload = {"text": body.text[:200]}
+    if cfg['voice_service_voice']:
+        payload['voice'] = cfg['voice_service_voice']
     async with aiohttp.ClientSession() as s:
         async with s.post(
-            f"{cfg['voice_tts_url']}", json={"text": body.text[:200]},
+            f"{cfg['voice_tts_url']}", json=payload,
             timeout=aiohttp.ClientTimeout(total=60),
         ) as r:
             if r.status >= 400:

@@ -159,6 +159,12 @@ ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS owner_id BIGINT;
 ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'unclassified';
 ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS prism_instance TEXT NOT NULL DEFAULT '';
 ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS owner_id BIGINT;
+-- Optional creation receipts; clients without request_id retain their behavior.
+ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS creation_request_id TEXT;
+ALTER TABLE call_tasks ADD COLUMN IF NOT EXISTS creation_payload_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS call_tasks_creation_request_idx
+ON call_tasks (prism_instance, audience, (COALESCE(owner_id, -1)), creation_request_id)
+WHERE creation_request_id IS NOT NULL;
 -- Existing greetings, personas and language choices are retained.
 CREATE TABLE IF NOT EXISTS voice_phrase_translations (
     source_hash TEXT NOT NULL,

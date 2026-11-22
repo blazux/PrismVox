@@ -53,13 +53,18 @@ jobs:
       - name: Check Go code
         working-directory: agent
         run: go vet ./...
+      - name: Check vulnerable Go calls
+        working-directory: agent
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck ./...
       - name: Test call agent
         working-directory: agent
         run: go test -race -p 1 ./...
       - name: Test console and archive
         run: python -m unittest discover -s ui/tests -p 'test_*.py'
       - name: Test console interactions
-        run: node --test ui/tests/call-log-tools.cjs ui/tests/embedding-provider.cjs
+        run: node --test ui/tests/call-log-tools.cjs ui/tests/embedding-provider.cjs ui/tests/outbound-create.cjs ui/tests/release-tags.cjs ui/tests/sip-draft.cjs ui/tests/outbound-pages.cjs
 
   build:
     needs: verify
@@ -85,6 +90,9 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Identify stable release
+        id: release
+        run: echo "stable=$(bash scripts/is-stable-release.sh "$GITHUB_REF")" >> "$GITHUB_OUTPUT"
       - name: Compute image tags and labels
         id: meta
         uses: docker/metadata-action@v6
@@ -94,7 +102,7 @@ jobs:
           tags: |
             type=raw,value=unstable,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ steps.release.outputs.stable == 'true' }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
         with:

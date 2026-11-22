@@ -256,6 +256,7 @@ class SharedModelTests(unittest.IsolatedAsyncioTestCase):
         cfg={'llm_url_standard':'http://fast-llm:8080/v1','llm_model_standard':'fast','llm_model_oncall':'heavy'}
         class Pool:
             async def fetchval(self,sql,key):return cfg.get(key)
+            async def fetch(self,sql,keys):return [{'key':key,'value':cfg[key]} for key in keys if key in cfg]
         pool=Pool()
         self.assertEqual(await app._backend_for(pool),('http://fast-llm:8080/v1',{}))
         self.assertEqual(await app._model_for(pool),'fast')
@@ -280,6 +281,7 @@ class SharedModelTests(unittest.IsolatedAsyncioTestCase):
         cfg={'llm_url_standard':url,'llm_model_standard':'fast','llm_model_oncall':'heavy'}
         class Pool:
             async def fetchval(self,sql,key):return cfg.get(key)
+            async def fetch(self,sql,keys):return [{'key':key,'value':cfg[key]} for key in keys if key in cfg]
         app._pool=Pool();app.LLM_BASE_URL='http://gateway.invalid/v1'
         try:
             pieces=[piece async for piece in app._sglang_stream([{'role':'user','content':'Synthetic fixture'}],'fast')]

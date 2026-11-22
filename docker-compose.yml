@@ -148,13 +148,13 @@ services:
       # address you actually browse to. Not required — a mismatch just adds a
       # second click-through, it doesn't block the mic.
       - UI_TLS_SAN=${UI_TLS_SAN:-}
-      # Same switch as the agent. Set → the console page retires and points at
-      # Prism, which owns the operator surface and drives it through our API.
-      # The API itself stays up — that proxy is what does the driving. Empty →
-      # standalone Vox, full console.
+      # Bootstrap the same saved Prism connection as the call agent. The local
+      # console remains available at /console for connection recovery.
       - PRISM_URL=${PRISM_URL:-}
+      - PRISM_TOKEN=${PRISM_TOKEN:-}
       - PRISM_PUBLIC_URL=${PRISM_PUBLIC_URL:-}
       - CORTEX_URL=${CORTEX_URL:-}
+      - CORTEX_TOKEN=${CORTEX_TOKEN:-}
       # Browser login / API Basic authentication and a separate token for agent clients.
       - UI_USER=${UI_USER:-admin}
       - UI_PASSWORD=${UI_PASSWORD:-}

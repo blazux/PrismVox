@@ -8,6 +8,7 @@ const root=path.resolve(__dirname,'../app/static');
  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[],writes=[];
  page.on('pageerror',e=>errors.push(e.message));
  const config={system_prompt:'Inbound fixture',outbound_system_prompt:'Outbound fixture',llm_model_standard:'fast',llm_model_oncall:'capable',greeting:'Hello',rag_enabled:'true',mcp_enabled:'false',transfer_dialog_turns:'3'};
+ const connection={enabled:false,prism_url:'http://prism-fixture.invalid',prism_public_url:'https://prism.example.test',token_configured:true,model:''};
  let fail=false;
  await page.route('**/*',route=>{
   const req=route.request(),url=new URL(req.url());
@@ -15,6 +16,11 @@ const root=path.resolve(__dirname,'../app/static');
   if(url.pathname.startsWith('/static/'))return route.fulfill({path:path.join(root,url.pathname.slice(8))});
   if(url.pathname==='/')return route.fulfill({path:path.join(root,'index.html')});
   if(url.pathname==='/api/voice/editor')return route.fulfill({contentType:'text/html',body:'<p>Speech providers</p>'});
+  if(url.pathname==='/api/prism/connection'){
+   if(req.method()==='PUT'){const body=req.postDataJSON();writes.push(body);for(const field of ['enabled','prism_url','prism_public_url'])if(field in body)connection[field]=body[field];if(body.prism_token)connection.token_configured=true;if(body.clear_prism_token)connection.token_configured=false;}
+   return route.fulfill({contentType:'application/json',body:JSON.stringify(connection)});
+  }
+  if(url.pathname==='/api/prism/connection/status')return route.fulfill({contentType:'application/json',body:JSON.stringify({connected:connection.enabled,detail:connection.enabled?'Connected fixture':'Connection disabled'})});
   if(req.method()==='PUT'){
    writes.push(req.postDataJSON());
    if(fail)return route.fulfill({status:500,contentType:'application/json',body:'{"detail":"Fixture failure"}'});
@@ -60,16 +66,31 @@ const root=path.resolve(__dirname,'../app/static');
  assert.deepEqual(Object.keys(writes[2].values),['transfer_dialog_turns']);
  for(const width of [1280,390]){
   await page.setViewportSize({width,height:900});
-  for(const name of ['agentcfg','voicecfg','transfers','sip']){
+  for(const name of ['agentcfg','voicecfg','transfers','sip','prismlink']){
    await page.locator(`#tab-setup .subtabs button[onclick*="${name}"]`).click();
    assert.ok(await page.locator('#subtab-'+name).isVisible());
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),name+' overflow '+width);
   }
  }
+ fail=false;
+ await page.locator('#prism-connection-tab').click();
+ await page.waitForFunction(()=>document.getElementById('prism-url').value==='http://prism-fixture.invalid');
+ assert.equal(await page.locator('#prism-token').inputValue(),'');
+ assert.match(await page.locator('#prism-token').getAttribute('placeholder'),/Token saved/);
+ await page.locator('#prism-url').fill('https://new-prism.invalid/prefix');
+ await page.locator('#prism-token').fill('new-synthetic-connection-token');
+ await page.locator('#prism-enabled').check();
+ await page.locator('#prism-save').click();
+ await page.locator('#prism-status').filter({hasText:'Connected fixture'}).waitFor();
+ assert.equal(writes.at(-1).prism_url,'https://new-prism.invalid/prefix');
+ assert.equal(writes.at(-1).prism_token,'new-synthetic-connection-token');
+ assert.equal(await page.locator('#prism-token').inputValue(),'');
+ await page.goto('http://fixture.invalid/?settings=connection');
+ assert(await page.locator('#subtab-prismlink').isVisible(),'recovery link did not open connection settings');
  await page.locator('#tab-setup .subtabs button[onclick*="agentcfg"]').click();
  await page.screenshot({path:'/tmp/prismvox-settings-mobile.png',fullPage:true});
  await page.setViewportSize({width:1280,height:900});
  await page.screenshot({path:'/tmp/prismvox-settings-desktop.png',fullPage:true});
- assert.deepEqual(errors,[]);console.log('Settings: scoped save, discard, errors, navigation and mobile checks passed');
+ assert.deepEqual(errors,[]);console.log('Settings: scoped save, discard, errors, recovery connection, navigation and mobile checks passed');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

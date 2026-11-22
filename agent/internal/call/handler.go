@@ -207,6 +207,10 @@ type Handler struct {
 	extChanID   string
 	snoopChanID string // Snoop(spy=in) tap: caller mic only, no playback echo
 	rtpReceiver *rtp.Receiver
+	// The final transfer bridge outlives this handler. The ARI event coordinator
+	// owns it until both phone channels end; media cleanup never owns that bridge.
+	transferBridgeCreated func(id, caller, recipient string)
+	transferBridgeFailed  func(id string)
 
 	// playback futures: pbID → signal channel
 	pbFutures map[string]chan struct{}
@@ -217,11 +221,12 @@ type Handler struct {
 	transferEnd   chan string
 
 	// lifecycle
-	running  bool
-	done     chan struct{}
-	stop     chan struct{}
-	stopOnce sync.Once
-	mu       sync.Mutex
+	running     bool
+	callerOwned bool // released only by hangup or a confirmed handoff; guarded by mu
+	done        chan struct{}
+	stop        chan struct{}
+	stopOnce    sync.Once
+	mu          sync.Mutex
 
 	// service clients
 	llmClient *llm.Client
@@ -240,6 +245,7 @@ func NewHandler(
 ) *Handler {
 	h := &Handler{
 		channelID:     channelID,
+		callerOwned:   true,
 		ari:           ariClient,
 		pool:          pool,
 		callerNumber:  callerNumber,
@@ -279,6 +285,12 @@ func NewOutboundHandler(
 // Done is closed when the call lifecycle (Run) has fully finished.
 func (h *Handler) Done() <-chan struct{} {
 	return h.done
+}
+
+// SetTransferBridgeCallbacks installs the independent bridge owner before Run.
+func (h *Handler) SetTransferBridgeCallbacks(created func(id, caller, recipient string), failed func(id string)) {
+	h.transferBridgeCreated = created
+	h.transferBridgeFailed = failed
 }
 
 // Stop requests termination; Run alone owns teardown and persistence. It is safe
@@ -420,6 +432,12 @@ func (h *Handler) Run(ctx context.Context) {
 		log.Printf("[%s] Model configuration unavailable: %v", h.channelID, err)
 		return
 	}
+	if h.task != nil {
+		// The model may come through Prism's inference relay, but outbound calls
+		// retain Vox's mission loop rather than becoming personal phone sessions.
+		h.llmClient.PrismURL = ""
+		h.llmClient.CallerKnown = false
+	}
 
 	// RAG is agentic: when enabled, the model gets a search_knowledge_base tool
 	// (inbound only — outbound calls are mission-driven, no KB).
@@ -434,7 +452,7 @@ func (h *Handler) Run(ctx context.Context) {
 
 	if h.task == nil {
 		// Answer the inbound call
-		if _, status, err := h.ari.Post("/channels/"+h.channelID+"/answer", nil); err != nil || status >= 400 {
+		if _, status, err := h.ari.Post("/channels/"+h.channelID+"/answer", nil); err != nil || status < 200 || status >= 300 {
 			log.Printf("[%s] Answer failed (status=%d): %v", h.channelID, status, err)
 			return
 		}
@@ -671,7 +689,7 @@ func (h *Handler) setupMedia(ctx context.Context) bool {
 	params := url.Values{}
 	params.Set("channel", h.channelID+","+h.extChanID)
 	data, status, err := h.ari.PostParams("/bridges/"+h.bridgeID+"/addChannel", params)
-	if err != nil || status >= 400 {
+	if err != nil || status < 200 || status >= 300 {
 		log.Printf("[%s] addChannel failed (status=%d): %v %s", h.channelID, status, err, string(data))
 		return false
 	}
@@ -1241,13 +1259,28 @@ func (h *Handler) sayAndHangup(ctx context.Context, text string) {
 	h.hangup()
 }
 
-// hangup terminates the caller's channel. StasisEnd then triggers Cleanup.
+// hangup releases the caller's channel once. A successful transfer has already
+// handed ownership to Asterisk and must survive the handler's cleanup.
 func (h *Handler) hangup() {
 	h.mu.Lock()
 	h.running = false
+	owned := h.callerOwned
+	h.callerOwned = false
 	h.mu.Unlock()
+	if !owned || h.ari == nil {
+		return
+	}
 	log.Printf("[%s] Hanging up", h.channelID)
-	h.ari.Delete("/channels/" + h.channelID) //nolint:errcheck
+	if err := h.ari.Delete("/channels/" + h.channelID); err != nil {
+		log.Printf("[%s] Hangup failed: %v", h.channelID, err)
+	}
+}
+
+func (h *Handler) handoffCaller() {
+	h.mu.Lock()
+	h.callerOwned = false
+	h.running = false
+	h.mu.Unlock()
 }
 
 // ── Tool handling ──────────────────────────────────────────────────────────────
@@ -1423,21 +1456,11 @@ func (h *Handler) handleToolCalls(
 			log.Printf("[%s] end_call requested by LLM", h.channelID)
 
 		case "take_message":
-			recipient := strings.TrimSpace(stringFromMap(args, "recipient"))
-			content := strings.TrimSpace(stringFromMap(args, "content"))
-			if recipient == "" || content == "" {
-				builtinSpoken = append(builtinSpoken, "Je suis désolée, je n'ai pas pu enregistrer le message.")
-				continue
+			reply, messageErr := h.recordMessage(ctx, args)
+			if messageErr != nil {
+				log.Printf("[%s] Message recording failed: %v", h.channelID, messageErr)
 			}
-			msg := fmt.Sprintf("Pour %s : %s", recipient, content)
-			h.message = &msg
-			if h.llmClient.Docked() {
-				h.llmClient.GatewayContext = append(h.llmClient.GatewayContext, "Message pour "+recipient+" noté dans le journal d'appel Vox ; personne n'est prévenu automatiquement.")
-			}
-			h.toolsUsed = append(h.toolsUsed, map[string]interface{}{"tool": "take_message", "args": args, "outcome": "recorded_in_call_log_not_delivered"})
-			// The message lands in the call log; nobody is paged. Don't promise a handoff.
-			builtinSpoken = append(builtinSpoken, fmt.Sprintf("Le message pour %s est bien noté.", recipient))
-			log.Printf("[%s] Message saved", h.channelID)
+			builtinSpoken = append(builtinSpoken, reply)
 
 		case "search_knowledge_base":
 			query := strings.TrimSpace(stringFromMap(args, "query"))
@@ -1585,9 +1608,10 @@ func (h *Handler) executeTransfer(ctx context.Context, cfg *config.Config, desti
 		if err != nil {
 			return err
 		}
-		if status >= 400 {
+		if status < 200 || status >= 300 {
 			return fmt.Errorf("redirect (REFER) failed: status %d", status)
 		}
+		h.handoffCaller()
 		return nil
 	}
 
@@ -1604,9 +1628,10 @@ func (h *Handler) executeTransfer(ctx context.Context, cfg *config.Config, desti
 	if err != nil {
 		return err
 	}
-	if status >= 400 {
+	if status < 200 || status >= 300 {
 		return fmt.Errorf("continueInDialplan failed: status %d", status)
 	}
+	h.handoffCaller()
 	return nil
 }
 
@@ -1655,7 +1680,7 @@ func (h *Handler) executeAttendedTransfer(
 		originate["callerId"] = cid
 	}
 	_, status, err := h.ari.Post("/channels", originate)
-	if err != nil || status >= 400 {
+	if err != nil || status < 200 || status >= 300 {
 		log.Printf("[%s] Originate failed (status=%d): %v", h.channelID, status, err)
 		h.ari.Delete("/channels/" + h.channelID + "/moh") //nolint:errcheck
 		return "failed"
@@ -1714,10 +1739,6 @@ func (h *Handler) executeAttendedTransfer(
 			return "failed"
 		}
 
-		h.mu.Lock()
-		h.running = false
-		h.mu.Unlock()
-
 		if h.rtpReceiver != nil {
 			h.rtpReceiver.Stop()
 			h.rtpReceiver = nil
@@ -1757,17 +1778,25 @@ func (h *Handler) bridgeTransfer(recipient string) error {
 	if id == "" {
 		return fmt.Errorf("ARI returned no bridge id")
 	}
+	if h.transferBridgeCreated != nil {
+		h.transferBridgeCreated(id, h.channelID, recipient)
+	}
 	_, status, err := h.ari.PostParams("/bridges/"+id+"/addChannel", url.Values{"channel": {h.channelID + "," + recipient}})
-	if err != nil || status >= 400 {
-		h.ari.Delete("/bridges/" + id) //nolint:errcheck
+	if err != nil || status < 200 || status >= 300 {
+		if h.transferBridgeFailed != nil {
+			h.transferBridgeFailed(id)
+		} else {
+			h.ari.Delete("/bridges/" + id) //nolint:errcheck
+		}
 		if h.bridgeID != "" {
 			_, restoreStatus, restoreErr := h.ari.PostParams("/bridges/"+h.bridgeID+"/addChannel", url.Values{"channel": {h.channelID}})
-			if restoreErr != nil || restoreStatus >= 400 {
+			if restoreErr != nil || restoreStatus < 200 || restoreStatus >= 300 {
 				log.Printf("[%s] Restore media failed: status=%d err=%v", h.channelID, restoreStatus, restoreErr)
 			}
 		}
 		return fmt.Errorf("bridge add failed: status=%d err=%v", status, err)
 	}
+	h.handoffCaller()
 	return nil
 }
 
@@ -2265,18 +2294,26 @@ func (h *Handler) prepareWAVFile(wavBytes []byte, channelID string) (fpath, file
 	return fpath, filename, nil
 }
 
-// startPlayback asks Asterisk (via ARI) to play a prepared sound file on the
-// channel and returns the playback ID. It does not wait for completion;
-// successive calls on the same channel are queued and played in order.
-func (h *Handler) startPlayback(channelID, filename string) (string, error) {
-	result, err := h.ari.PostJSON("/channels/"+channelID+"/play", map[string]interface{}{
+// startPlayback installs the completion future before sending the caller-chosen
+// playback ID to ARI. PlaybackFinished can arrive before the REST reply.
+func (h *Handler) startPlayback(channelID, filename string) (string, chan struct{}, error) {
+	pbID := "agent-" + randHex(16)
+	done := make(chan struct{}, 1)
+	h.pbMu.Lock()
+	h.pbFutures[pbID] = done
+	h.pbMu.Unlock()
+	_, status, err := h.ari.Post("/channels/"+channelID+"/play/"+pbID, map[string]interface{}{
 		"media": "sound:custom/" + filename,
 	})
-	if err != nil {
-		return "", fmt.Errorf("startPlayback: ARI play: %w", err)
+	if err != nil || status < 200 || status >= 300 {
+		h.pbMu.Lock()
+		delete(h.pbFutures, pbID)
+		h.pbMu.Unlock()
+		// The POST response may have been lost after playback started.
+		h.ari.Delete("/playbacks/" + pbID) //nolint:errcheck
+		return "", nil, fmt.Errorf("startPlayback: ARI play: status=%d err=%v", status, err)
 	}
-	pbID, _ := result["id"].(string)
-	return pbID, nil
+	return pbID, done, nil
 }
 
 // wavToEgressPCM decodes a TTS WAV to mono int16 at the RTP egress rate, ready to be
@@ -2346,6 +2383,9 @@ func (h *Handler) playWAVToCaller(ctx context.Context, wavBytes []byte) error {
 // other channels (e.g. an attended-transfer announcement to the recipient) still
 // use ARI /play.
 func (h *Handler) playWAV(ctx context.Context, wavBytes []byte, channelID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if channelID == h.channelID && h.rtpReceiver != nil {
 		return h.playWAVToCaller(ctx, wavBytes)
 	}
@@ -2355,18 +2395,10 @@ func (h *Handler) playWAV(ctx context.Context, wavBytes []byte, channelID string
 	}
 	defer os.Remove(fpath) //nolint:errcheck
 
-	pbID, err := h.startPlayback(channelID, filename)
+	pbID, ch, err := h.startPlayback(channelID, filename)
 	if err != nil {
 		return err
 	}
-	if pbID == "" {
-		return nil
-	}
-
-	ch := make(chan struct{}, 1)
-	h.pbMu.Lock()
-	h.pbFutures[pbID] = ch
-	h.pbMu.Unlock()
 	defer func() {
 		h.pbMu.Lock()
 		delete(h.pbFutures, pbID)
@@ -2412,13 +2444,19 @@ func (h *Handler) playQueued(ctx context.Context, channelID string, in <-chan pl
 	var mu sync.Mutex
 	var queue []qItem
 	stopped := false
+	watchDone := make(chan struct{})
+	defer close(watchDone)
 
 	// Barge-in killer: the instant ctx is cancelled, stop every queued/playing
 	// playback so the agent goes silent immediately. (After a clean finish ctx is
 	// also cancelled by the caller; deleting already-finished playbacks is a
 	// harmless no-op.)
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-watchDone:
+			return
+		}
 		mu.Lock()
 		stopped = true
 		ids := make([]string, 0, len(queue))
@@ -2436,7 +2474,7 @@ func (h *Handler) playQueued(ctx context.Context, channelID string, in <-chan pl
 		mu.Lock()
 		s := stopped
 		mu.Unlock()
-		if s {
+		if s || ctx.Err() != nil {
 			continue // barge-in: drain remaining chunks without playing
 		}
 		fpath, filename, err := h.prepareWAVFile(chunk.wav, channelID)
@@ -2444,21 +2482,12 @@ func (h *Handler) playQueued(ctx context.Context, channelID string, in <-chan pl
 			privacy.Logf("[%s] Playback prepare error (%q): %v", h.channelID, chunk.text, err)
 			continue
 		}
-		pbID, err := h.startPlayback(channelID, filename)
+		pbID, done, err := h.startPlayback(channelID, filename)
 		if err != nil {
 			privacy.Logf("[%s] Playback start error (%q): %v", h.channelID, chunk.text, err)
 			os.Remove(fpath) //nolint:errcheck
 			continue
 		}
-		if pbID == "" {
-			os.Remove(fpath) //nolint:errcheck
-			continue
-		}
-		done := make(chan struct{}, 1)
-		h.pbMu.Lock()
-		h.pbFutures[pbID] = done
-		h.pbMu.Unlock()
-
 		mu.Lock()
 		if stopped {
 			// Barge-in fired between the check and now: cancel this one too.
@@ -2616,7 +2645,11 @@ func (h *Handler) cleanup(ctx context.Context) {
 	h.mu.Unlock()
 	if h.rtpReceiver != nil {
 		h.rtpReceiver.Stop()
+		h.rtpReceiver = nil
 	}
+	// Run also returns on initialization/media failures, while the caller may
+	// still be ringing or connected. Release it before slower archive writes.
+	h.hangup()
 
 	h.finalizeLog(ctx)
 

@@ -103,14 +103,23 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('cdn.jsdelivr.net', standalone)
         app.PRISM_URL = "http://prism:8080"
         app.PRISM_PUBLIC_URL = "https://prism.example.test"
-        connected = await app.index()
+        with patch('prism_integration.status', AsyncMock(return_value={'connected': True})):
+            connected = await app.index()
         self.assertIn('href="https://prism.example.test/?app=telephony"', connected)
         self.assertIn("Telephony is in Prism", connected)
         self.assertNotIn('href="http://prism:8080"', connected)
         app.PRISM_PUBLIC_URL = ""
-        self.assertNotIn('href="http://prism:8080"', await app.index())
+        with patch('prism_integration.status', AsyncMock(return_value={'connected': True})):
+            self.assertNotIn('href="http://prism:8080"', await app.index())
         app.PRISM_PUBLIC_URL = "javascript:alert(1)"
-        self.assertNotIn('href="javascript:', await app.index())
+        with patch('prism_integration.status', AsyncMock(return_value={'connected': True})):
+            self.assertNotIn('href="javascript:', await app.index())
+        with patch('prism_integration.status', AsyncMock(return_value={'connected': False, 'detail': 'Could not reach Prism'})):
+            broken = await app.index()
+        self.assertIn('Prism connection unavailable', broken)
+        self.assertIn('id="prism-connection-form"', broken)
+        self.assertNotIn('Connected to Prism</span>', broken)
+        self.assertIn('id="prism-connection-form"', await app.recovery_console())
 
 
 class VoiceBackendTests(unittest.IsolatedAsyncioTestCase):

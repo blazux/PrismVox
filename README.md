@@ -115,7 +115,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 The GitHub Actions workflow tests the call agent and console with a disposable
 PostgreSQL database before building all three images for `linux/amd64` and
 `linux/arm64`. Pushes to `main` publish `unstable`; tags beginning with `v` publish
-that tag and `latest`. Pull requests run tests without publishing. The workflow
+the matching image tag. Only stable `vMAJOR.MINOR.PATCH` tags also update `latest`;
+prereleases such as `v1.1.0-rc.1` leave it unchanged. Pull requests run tests without publishing. The workflow
 can also be started manually from **Actions → Build & Push Docker images**.
 
 In the PrismVox repository, add these Actions secrets under
@@ -302,9 +303,30 @@ the page does not. Dictionary edits have their own Save/Cancel controls.
 
 The standalone voice selector saves immediately. Speech providers have their own
 **Save voice settings** button; **Connect** only loads available models and voices.
-For SIP, **Save** stores the line settings without activating them. **Apply**
-saves the settings and reloads the trunk in Asterisk.
+For SIP, switching tabs preserves the line draft, including edits made while saved
+settings are loading. **Reset** reloads saved values. **Save** stores the line
+settings without activating them. **Apply** saves the settings and reloads the
+trunk in Asterisk.
 Saved call settings apply to new calls.
+
+### Outbound requests
+
+The call queue shows its full pending count and provides **Previous/Next** pages.
+**Redial now** starts a new attempt with an empty current result; earlier call
+logs remain in the archive.
+
+If scheduling is not confirmed, the mission stays in the form. **Retry previous
+request** checks the same creation request without duplicating it. API clients
+can use the same optional `request_id` in `POST /api/calls` for retries: the same
+payload in the same authenticated scope returns the original task ID; reusing
+that ID with a different payload returns HTTP 409. Clients that omit the field
+create a separate task on each POST. To schedule a different mission after an
+uncertain response, review the call list and choose **I've checked the call list**;
+this keeps the earlier request unchanged and retains the new draft.
+
+When an outbound dial request has an uncertain network outcome, PrismVox checks
+the known Asterisk channel before proceeding. If the outcome cannot be confirmed,
+the task stops for manual review. Check call history before retrying it.
 
 ## Configure the standalone knowledge base
 
@@ -354,11 +376,24 @@ use their personal assistant and existing organizer/mailbox; other callers reach
 the standard. No Prism user account or multi-user conversion is required.
 
 
-Set `PRISM_URL` and `PRISM_TOKEN` in PrismVox. In Prism, set `VOX_URL` to the
-PrismVox console address and use `VOX_USER` and `VOX_PASSWORD` for its console
-credentials. Both services must be reachable on a shared Docker network; keep
-the call agent on a single network for reliable RTP addressing. When using the
-standard project name, that network is `prismvox_agentnet`.
+Open **Settings → Telephony** in personal Prism, or **Admin → Telephony** in
+shared Prism. Enter the PrismVox console URL and its administration credentials,
+then connect and check the connection in both directions. The server addresses
+must be reachable from the other service's containers. Set a separate public
+Prism URL for the browser link when the server URL is internal.
+
+For recovery, open **`/console`** on PrismVox, then **Settings → Prism connection**.
+This console remains available if Prism is unreachable or the connection token
+is rejected. A blank token preserves the saved credential only while the Prism
+server URL stays unchanged; changing that URL requires a new token. Disabling
+the connection keeps its configuration for later use.
+
+Existing `PRISM_URL`, `PRISM_TOKEN` and `PRISM_PUBLIC_URL` values bootstrap the
+saved PrismVox connection once. Saved connection settings take precedence and
+are read by the agent for each new call. Existing `VOX_URL`, `VOX_USER` and
+`VOX_PASSWORD` settings in Prism remain supported. When using a shared Docker
+network, keep the call agent on a single network for reliable RTP addressing;
+the standard project name creates `prismvox_agentnet`.
 
 - Prism supplies the transfer directory from its user profiles.
 - Recognized callers use Prism's voice agent with their profile, scoped
@@ -369,21 +404,26 @@ standard project name, that network is `prismvox_agentnet`.
 - Unknown callers use PrismVox's switchboard persona and Prism's selected public
   voice knowledge collection. Configure that collection in Prism.
 - Prism relays transfers, messages and hang-up requests to PrismVox/Asterisk.
-- The standalone console points to Prism when docked; its protected administration
-  API remains available to Prism.
-- **Agents & models → Conversation model — recognised callers**, under **Admin → Telephony** in shared mode or **Settings → Telephony** in personal mode,
+- The console points to Prism after a successful connection check; its protected
+  administration API and local recovery console remain available.
+- **Agent & voice → Conversation model — recognised callers**, under **Admin → Telephony** in shared mode or **Settings → Telephony** in personal mode,
   selects the model for recognized callers. An empty selection follows the Prism
   deployment default; the web default is unchanged. Unknown callers and outbound
-  missions share the **PrismVox model — unknown callers & outbound calls** in
-  the same section. Its endpoint is independent of the Prism model catalogue.
+  missions share one PrismVox model. Choose a source/model already configured in
+  Prism, including its default model, to use it for the reception agent, outbound
+  missions, transfer dialogs, summaries and supervision. Prism resolves the
+  provider and its credential; no provider API key is copied into PrismVox.
+  The reception and mission loops continue to run in PrismVox. The existing Vox
+  model/endpoint remains available as an explicit alternative.
 
-Prism’s telephony configuration groups settings into **Agents & models**,
-**Voice & greeting**, **Transfers & directories** and **Phone connection**.
+Prism’s telephony configuration groups settings into **Connection**,
+**Agent & voice**, **Access & resources** and **Advanced**.
 Use the Save button beside the block you edited. Voice and greetings share
 **Save voice & greeting**; the public knowledge collection selector saves
 immediately. **Save & apply** saves and reloads the SIP trunk.
 
-`PRISM_PUBLIC_URL` sets the browser-facing Prism URL when `PRISM_URL` is internal.
+Voice previews use the requested voice for that sample only. They do not change
+the saved voice used by subsequent calls.
 
 ## Conversation memory and call archives
 
@@ -396,8 +436,9 @@ by Prism use Prism's own context management.
 The full call transcript is kept separately and saved to PostgreSQL when the
 call ends. The final summary uses both sides of that transcript and the recorded
 action outcomes. An initiated blind transfer does not confirm that the recipient
-answered; a recorded message does not imply delivery. A process crash before
-the final save can lose the in-progress transcript.
+answered. A message is confirmed as recorded only after it is saved to the call
+log; this does not deliver it to the recipient. A process crash before the final
+save can lose the in-progress transcript.
 
 Archived calls are available for supervision; they are not automatically loaded
 into future calls. Recognized callers connected to Prism can reuse their

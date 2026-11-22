@@ -40,8 +40,11 @@ const (
 
 // outboundPending tracks an originated call between originate and StasisStart.
 type outboundPending struct {
-	task     *db.CallTask
-	answered chan *call.Handler
+	task             *db.CallTask
+	answered         chan *call.Handler
+	handler          *call.Handler // published under coordinator.mu before the event loop starts it
+	eventsUncertain  bool          // the ARI event stream was unavailable during this request
+	eventsGeneration uint64        // catches reconnects even after removal from pending
 }
 
 // coordinator shares call state between the ARI event loop and the outbound
@@ -53,15 +56,19 @@ type outboundPending struct {
 // a missed StasisEnd during a disconnect would otherwise leave the counter
 // permanently > 0 and wedge the poller.
 type coordinator struct {
-	mu      sync.Mutex
-	active  map[string]struct{}         // active caller-facing channel IDs
-	pending map[string]*outboundPending // outbound channelID → pending state
+	mu               sync.Mutex
+	active           map[string]struct{}         // active caller-facing channel IDs
+	pending          map[string]*outboundPending // outbound channelID → pending state
+	transferBridges  map[string]*transferBridge
+	eventsAvailable  bool
+	eventsGeneration uint64
 }
 
 func newCoordinator() *coordinator {
 	return &coordinator{
-		active:  make(map[string]struct{}),
-		pending: make(map[string]*outboundPending),
+		active:          make(map[string]struct{}),
+		pending:         make(map[string]*outboundPending),
+		transferBridges: make(map[string]*transferBridge),
 	}
 }
 
@@ -98,6 +105,8 @@ func (c *coordinator) activeCount() int {
 
 func (c *coordinator) addPending(cid string, p *outboundPending) {
 	c.mu.Lock()
+	p.eventsUncertain = !c.eventsAvailable
+	p.eventsGeneration = c.eventsGeneration
 	c.pending[cid] = p
 	c.mu.Unlock()
 }
@@ -112,6 +121,31 @@ func (c *coordinator) getPending(cid string) *outboundPending {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.pending[cid]
+}
+
+// attachPending and finishPending decide atomically whether a live handler or
+// the origination error/timeout path owns the channel.
+func (c *coordinator) attachPending(cid string, h *call.Handler) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p := c.pending[cid]
+	if p == nil || p.handler != nil {
+		return false
+	}
+	p.handler = h
+	p.answered <- h
+	return true
+}
+
+func (c *coordinator) finishPending(cid string) *call.Handler {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p := c.pending[cid]
+	delete(c.pending, cid)
+	if p == nil {
+		return nil
+	}
+	return p.handler
 }
 
 func (c *coordinator) ownedTasks() map[int64]bool {
@@ -251,12 +285,34 @@ func runOutboundCall(
 	}
 
 	_, status, err := ariClient.Post("/channels", originate)
-	if err != nil || status >= 400 {
-		log.Printf("outbound: task %d originate failed (status=%d): %v", task.ID, status, err)
-		if rErr := db.RetryCallTask(ctx, pool, task.ID, "failed", outboundRetryDelay); rErr != nil {
-			log.Printf("outbound: task %d retry update error: %v", task.ID, rErr)
+	accepted := status >= 200 && status < 300
+	uncertain := !accepted && !(status >= 400 && status < 500 && status != 409)
+	if uncertain {
+		// The supplied channelId lets us recover an accepted call without redialing.
+		_, observed, lookupErr := ariClient.Get("/channels/" + outCID)
+		accepted = observed == 200
+		if lookupErr != nil {
+			log.Printf("outbound: task %d reconciliation: %v", task.ID, lookupErr)
+		}
+	}
+	if !accepted {
+		if h := coord.finishPending(outCID); h != nil {
+			<-h.Done()
+			return
+		}
+		if uncertain {
+			cancelOutboundChannel(ariClient, outCID)
+			summary := "Call request outcome could not be confirmed. Review call history before retrying."
+			if e := db.FinishCallTask(ctx, pool, task.ID, "failed", &summary, nil); e != nil {
+				log.Printf("outbound: task %d unknown outcome update: %v", task.ID, e)
+			}
+		} else if e := db.RetryCallTask(ctx, pool, task.ID, "failed", outboundRetryDelay); e != nil {
+			log.Printf("outbound: task %d retry update: %v", task.ID, e)
 		}
 		return
+	}
+	if err != nil {
+		log.Printf("outbound: task %d accepted; response body unavailable: %v", task.ID, err)
 	}
 
 	select {
@@ -265,13 +321,56 @@ func runOutboundCall(
 		<-h.Done()
 	case <-time.After(outboundAnswerWait):
 		log.Printf("outbound: task %d no answer", task.ID)
-		ariClient.Delete("/channels/" + outCID) //nolint:errcheck
-		if rErr := db.RetryCallTask(ctx, pool, task.ID, "no_answer", outboundRetryDelay); rErr != nil {
-			log.Printf("outbound: task %d retry update error: %v", task.ID, rErr)
-		}
+		finishUnansweredOutbound(ctx, ariClient, pool, coord, outCID, p)
 	case <-ctx.Done():
 		ariClient.Delete("/channels/" + outCID) //nolint:errcheck
 	}
+}
+
+func (c *coordinator) setEventsAvailable(available bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.eventsAvailable = available
+	if !available {
+		c.eventsGeneration++
+		for _, p := range c.pending {
+			p.eventsUncertain = true
+		}
+	}
+}
+
+func finishUnansweredOutbound(ctx context.Context, client *ari.Client, pool *pgxpool.Pool, coord *coordinator, cid string, pending *outboundPending) {
+	if h := coord.finishPending(cid); h != nil {
+		<-h.Done()
+		return
+	}
+	closed := cancelOutboundChannel(client, cid)
+	coord.mu.Lock()
+	uncertain := pending.eventsUncertain || !coord.eventsAvailable || pending.eventsGeneration != coord.eventsGeneration
+	coord.mu.Unlock()
+	if closed && !uncertain {
+		if err := db.RetryCallTask(ctx, pool, pending.task.ID, "no_answer", outboundRetryDelay); err != nil {
+			log.Printf("outbound: task %d retry update: %v", pending.task.ID, err)
+		}
+		return
+	}
+	summary := "Call closure could not be confirmed. Review call history before retrying."
+	if uncertain {
+		summary = "ARI events were interrupted; whether the call was answered could not be confirmed. Review call history before retrying."
+	}
+	if err := db.FinishCallTask(ctx, pool, pending.task.ID, "failed", &summary, nil); err != nil {
+		log.Printf("outbound: task %d unknown outcome update: %v", pending.task.ID, err)
+	}
+}
+
+// A failed DELETE is not proof that the channel is gone. Only an observed
+// absence permits an automatic retry after a known accepted origination.
+func cancelOutboundChannel(client *ari.Client, cid string) bool {
+	if err := client.Delete("/channels/" + cid); err == nil {
+		return true
+	}
+	_, status, err := client.Get("/channels/" + cid)
+	return err == nil && status == 404
 }
 
 // run is the main ARI event loop with automatic reconnection.
@@ -285,6 +384,7 @@ func run(
 	activeCalls := make(map[string]*call.Handler)
 	// transferChans maps transfer_cid → parent_cid
 	transferChans := make(map[string]string)
+	go coord.monitorTransferBridges(ctx, ariClient)
 
 	for {
 		log.Println("Connecting to Asterisk ARI…")
@@ -292,6 +392,7 @@ func run(
 		// Reconcile active-call bookkeeping with Asterisk's reality: drop any
 		// channels (and their handlers) that no longer exist — e.g. calls that
 		// ended while the WebSocket was down, whose StasisEnd we never saw.
+		bridges := coord.transferBridgeSnapshot()
 		if live, err := ariClient.LiveChannelIDs(); err != nil {
 			log.Printf("ARI reconcile: cannot list channels: %v", err)
 		} else {
@@ -301,7 +402,16 @@ func run(
 					delete(activeCalls, cid)
 				}
 			}
+			for cid, parent := range transferChans {
+				if _, ok := live[cid]; !ok {
+					delete(transferChans, cid)
+					if handler := activeCalls[parent]; handler != nil {
+						handler.OnTransferChannelEnd(cid)
+					}
+				}
+			}
 			coord.reconcile(live)
+			coord.reconcileTransferBridges(ariClient, live, bridges)
 		}
 
 		if err := connectAndServe(ctx, wsURL, ariUser, ariPass, ariClient, pool, coord, activeCalls, transferChans); err != nil {
@@ -336,9 +446,14 @@ func connectAndServe(
 	}
 	conn, _, err := dialer.DialContext(ctx, wsURL, header)
 	if err != nil {
+		coord.setEventsAvailable(false)
 		return fmt.Errorf("WebSocket dial: %w", err)
 	}
 	defer conn.Close()
+	coord.setEventsAvailable(true)
+	defer coord.setEventsAvailable(false)
+	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopOnCancel()
 
 	log.Println("Connected to Asterisk ARI — waiting for calls")
 
@@ -391,6 +506,9 @@ func connectAndServe(
 
 			// Outbound call answered — hand the channel to an outbound handler
 			if len(args) > 0 && args[0] == "outbound" {
+				if _, exists := activeCalls[cid]; exists {
+					continue
+				}
 				p := coord.getPending(cid)
 				if p == nil {
 					log.Printf("[%s] Outbound StasisStart for unknown task — hanging up", cid)
@@ -398,10 +516,14 @@ func connectAndServe(
 					continue
 				}
 				handler := call.NewOutboundHandler(cid, ariClient, pool, p.task)
+				coord.ownTransferBridges(handler, ariClient)
+				if !coord.attachPending(cid, handler) {
+					ariClient.Delete("/channels/" + cid)
+					continue
+				}
 				activeCalls[cid] = handler
 				coord.addActive(cid)
 				go handler.Run(ctx)
-				p.answered <- handler
 				continue
 			}
 
@@ -413,6 +535,7 @@ func connectAndServe(
 			}
 
 			handler := call.NewHandler(cid, ariClient, pool, callerNumber)
+			coord.ownTransferBridges(handler, ariClient)
 			activeCalls[cid] = handler
 			coord.addActive(cid)
 			go handler.Run(ctx)
@@ -442,6 +565,7 @@ func connectAndServe(
 			if channel == nil {
 				continue
 			}
+
 			cid, _ := channel["id"].(string)
 
 			if _, ok := transferChans[cid]; ok {
@@ -449,6 +573,12 @@ func connectAndServe(
 			} else if handler, ok := activeCalls[cid]; ok {
 				log.Printf("[%s] Hangup", cid)
 				handler.Stop()
+			}
+
+		case "ChannelDestroyed":
+			channel, _ := event["channel"].(map[string]interface{})
+			if cid, _ := channel["id"].(string); coord.transferChannelEnded(cid) {
+				go coord.cleanupTransferBridges(ariClient)
 			}
 
 		case "PlaybackFinished", "PlaybackFailed":

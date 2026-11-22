@@ -144,6 +144,22 @@
     <button onclick="showSubTab('voicecfg',this)">Voice &amp; greeting</button>
     <button onclick="showSubTab('transfers',this)">Transfers &amp; directory</button>
     <button onclick="showSubTab('sip',this)">Phone connection</button>
+    <button id="prism-connection-tab" onclick="showSubTab('prismlink',this)">Prism connection</button>
+  </div>
+
+  <div id="subtab-prismlink" class="subtab-content">
+    <h3 id="prism-connection">Prism connection</h3>
+    <p class="muted">Connect Prism to manage telephony there. Saved changes apply to new calls.</p>
+    <form id="prism-connection-form" onsubmit="savePrismConnection(event)">
+      <label><input type="checkbox" id="prism-enabled" role="switch"> Enable Prism connection</label>
+      <label>Prism server URL<input type="url" id="prism-url" placeholder="http://prism-server:8080"></label>
+      <label>Connection token<input type="password" id="prism-token" autocomplete="new-password" placeholder="Leave empty to keep the saved token"></label>
+      <label><input type="checkbox" id="prism-clear-token"> Remove saved token</label>
+      <label>Public Prism URL (optional)<input type="url" id="prism-public-url" placeholder="https://prism.example.com"></label>
+      <small class="hint">The public URL is used for the browser link. The server URL must be reachable from the PrismVox containers.</small>
+      <div class="actions"><button type="submit" id="prism-save">Save connection</button><button type="button" class="outline" id="prism-check" onclick="checkPrismConnection()">Check saved connection</button><button type="button" class="outline" onclick="loadPrismConnection(true)">Reload saved connection</button></div>
+      <p id="prism-status" role="status"></p>
+    </form>
   </div>
 
   <!-- ── SIP sub-tab ── -->
@@ -153,7 +169,7 @@
       Connection to the SBC / BroadWorks. "Save" stores the config; "Apply" pushes it
       to Asterisk and reloads the trunk (without dropping calls in progress).
     </p>
-    <form id="sip-form" onsubmit="saveSip(event)">
+    <form id="sip-form" onsubmit="saveSip(event)" oninput="markSipEdit(event)" onchange="markSipEdit(event)">
       <label>
         Registrar (host)
         <input type="text" id="sip-sip_registrar" placeholder="sbc.example.com">
@@ -226,7 +242,7 @@
       <div class="actions">
         <button type="submit">Save</button>
         <button type="button" onclick="applySip()" id="sip-apply-btn">⟳ Apply (reload the trunk)</button>
-        <button type="button" class="outline" onclick="loadSip()">↻ Reset</button>
+        <button type="button" class="outline" onclick="loadSip(true)">↻ Reset</button>
       </div>
       <p id="sip-status" style="font-size:.78rem;margin-top:.4rem;display:none"></p>
     </form>
@@ -498,9 +514,12 @@
         <textarea id="call-mission" rows="3" placeholder="e.g. Call Alex to confirm his appointment tomorrow at 9am. If he can't, note the slot he prefers." required></textarea>
       </label>
       <button type="submit" style="margin-top:.5rem">Schedule the call</button>
+      <button type="button" class="outline" id="retry-call-request" onclick="submitPendingOutboundCall()" hidden>Retry previous request</button>
+      <button type="button" class="outline" id="checked-call-request" onclick="acknowledgePreviousOutboundCall()" hidden>I've checked the call list</button>
     </form>
   </details>
 
+  <p id="new-call-status" role="status" aria-live="polite"></p>
   <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem">
     <button onclick="loadOutbound()">↻ Refresh</button>
     <span id="calls-count" class="muted"></span>
@@ -514,6 +533,11 @@
         <tr><td colspan="8"><span class="muted">Loading…</span></td></tr>
       </tbody>
     </table>
+  </div>
+  <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;margin-top:.65rem">
+    <button class="outline" id="calls-prev" onclick="loadOutbound(outboundOffset - OUTBOUND_PAGE_SIZE)" disabled>Previous</button>
+    <span id="calls-range" class="muted" role="status" aria-live="polite"></span>
+    <button class="outline" id="calls-next" onclick="loadOutbound(outboundOffset + OUTBOUND_PAGE_SIZE)" disabled>Next</button>
   </div>
 </div>
 
@@ -636,6 +660,7 @@ function showSubTab(name, btn) {
   trigger.classList.add('active');
   if (name === 'sip')       { loadSip(); loadSipStatus(); }
   if (name === 'voicecfg') loadTTSVoices();
+  if (name === 'prismlink') loadPrismConnection();
   if (name === 'transfers') loadContacts();
   if (name === 'testagent') scrollAgentChat();
 }
@@ -675,6 +700,12 @@ const SIP_FIELDS = ['sip_registrar','sip_registrar_ip','sip_registrar_match',
                     'sip_username','sip_password','sip_tls_port','sip_udp_port',
                     'sip_domain','sip_callerid_name','sip_transfer_method',
                     'sip_transport_mode'];
+let sipLoaded = false, sipLoadPromise = null, sipLoadSequence = 0;
+const sipEditVersions = {};
+function markSipEdit(e) {
+  const key = e.target.id?.replace(/^sip-/, '');
+  if (SIP_FIELDS.includes(key)) sipEditVersions[key] = (sipEditVersions[key] || 0) + 1;
+}
 
 // Only the port field for the selected transport is relevant — hide the other.
 function onSipTransportModeChange() {
@@ -683,15 +714,29 @@ function onSipTransportModeChange() {
   document.getElementById('sip-udp-port-label').style.display = udp ? '' : 'none';
 }
 
-async function loadSip() {
-  try {
-    const cfg = await api('GET', '/api/sip');
-    SIP_FIELDS.forEach(k => setText('sip-' + k, cfg[k] || ''));
-    onSipTransportModeChange();
-    hide('sip-status');
-  } catch(e) {
-    sipStatus('Loading failed: ' + e.message, false);
-  }
+function loadSip(reset = false) {
+  if (!reset && (sipLoaded || sipLoadPromise)) return sipLoadPromise;
+  const sequence = ++sipLoadSequence, versions = { ...sipEditVersions };
+  sipLoadPromise = (async () => {
+    try {
+      const cfg = await api('GET', '/api/sip');
+      if (sequence !== sipLoadSequence) return;
+      let keptEdits = false;
+      SIP_FIELDS.forEach(k => {
+        if ((reset || !(versions[k] || 0)) && (sipEditVersions[k] || 0) === (versions[k] || 0)) setText('sip-' + k, cfg[k] || '');
+        else keptEdits = true;
+      });
+      sipLoaded = true;
+      onSipTransportModeChange();
+      if (keptEdits) sipStatus('Saved settings loaded; your newer edits are kept.');
+      else hide('sip-status');
+    } catch(e) {
+      if (sequence === sipLoadSequence) sipStatus('Loading failed: ' + e.message, false);
+    } finally {
+      if (sequence === sipLoadSequence) sipLoadPromise = null;
+    }
+  })();
+  return sipLoadPromise;
 }
 
 function _sipBody() {
@@ -709,6 +754,8 @@ function sipStatus(msg, ok = true) {
 
 async function saveSip(e) {
   if (e) e.preventDefault();
+  // A pending GET cannot replace the submitted form or later edits.
+  ++sipLoadSequence; sipLoadPromise = null; sipLoaded = true;
   try {
     await api('PUT', '/api/sip', _sipBody());
     sipStatus('✓ Saved (not applied yet — click "Apply")');
@@ -873,6 +920,48 @@ async function loadStatus() {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
+let prismConnectionLoaded=false,prismConnectionLoadSequence=0;
+function lockPrismConnection(locked){for(const field of document.getElementById('prism-connection-form').elements)field.disabled=locked;}
+async function loadPrismConnection(force=false) {
+  if(prismConnectionLoaded&&!force)return;
+  const sequence=++prismConnectionLoadSequence;lockPrismConnection(true);
+  try {
+    const cfg = await api('GET', '/api/prism/connection');
+    if(sequence!==prismConnectionLoadSequence)return;
+    document.getElementById('prism-enabled').checked = cfg.enabled;
+    document.getElementById('prism-url').value = cfg.prism_url || '';
+    document.getElementById('prism-public-url').value = cfg.prism_public_url || '';
+    const token = document.getElementById('prism-token');
+    token.value = ''; token.placeholder = cfg.token_configured ? 'Token saved — leave empty to keep' : 'Enter the connection token';
+    document.getElementById('prism-clear-token').checked = false;
+    prismConnectionLoaded=true;
+    await checkPrismConnection();
+  } catch (e) { if(sequence===prismConnectionLoadSequence)document.getElementById('prism-status').textContent = e.message; }
+  finally {if(sequence===prismConnectionLoadSequence)lockPrismConnection(false);}
+}
+async function checkPrismConnection() {
+  const status = document.getElementById('prism-status'), button = document.getElementById('prism-check');
+  button.disabled = true; status.textContent = 'Checking saved connection…';
+  try { const state = await api('GET', '/api/prism/connection/status'); status.textContent = state.detail; }
+  catch (e) { status.textContent = e.message; }
+  finally { button.disabled = false; }
+}
+async function savePrismConnection(event) {
+  event.preventDefault(); const button = document.getElementById('prism-save'), status = document.getElementById('prism-status');
+  if(button.disabled)return;
+  lockPrismConnection(true); status.textContent = 'Saving…';
+  try {
+    await api('PUT', '/api/prism/connection', {
+      enabled: document.getElementById('prism-enabled').checked,
+      prism_url: document.getElementById('prism-url').value,
+      prism_public_url: document.getElementById('prism-public-url').value,
+      prism_token: document.getElementById('prism-token').value,
+      clear_prism_token: document.getElementById('prism-clear-token').checked,
+    });
+    await loadPrismConnection(true);
+  } catch (e) { status.textContent = e.message; }
+  finally { lockPrismConnection(false); }
+}
 async function loadConfig(root = document) {
   const setText = (id, value) => { const el = document.getElementById(id); if (root.contains(el)) el.value = value; };
   const setCheck = (id, value) => { const el = document.getElementById(id); if (root.contains(el)) el.checked = value; };
@@ -934,7 +1023,7 @@ async function previewTTSVoice() {
     const resp = await fetch('/api/tts/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: "Hello, thank you for calling. How can I help you today?" }),
+      body: JSON.stringify({ text: "Hello, thank you for calling. How can I help you today?", voice: document.getElementById('tts-voice-select').value }),
     });
     if (!resp.ok) throw new Error(resp.statusText);
     const blob = await resp.blob();
@@ -1399,17 +1488,37 @@ const CALL_STATUS = {
   cancelled: { label: 'Cancelled',   color: 'var(--muted)' },
 };
 
-async function loadOutbound() {
+const OUTBOUND_PAGE_SIZE = 100;
+let outboundOffset = 0, outboundTotal = 0, outboundLoadSequence = 0;
+async function loadOutbound(offset = outboundOffset) {
+  const sequence = ++outboundLoadSequence;
+  outboundOffset = Math.max(0, offset);
+  const requestedOffset = outboundOffset;
   const tbody = document.getElementById('calls-body');
+  const previous = document.getElementById('calls-prev'), next = document.getElementById('calls-next');
+  const range = document.getElementById('calls-range');
+  previous.disabled = next.disabled = true;
   try {
-    const data = await api('GET', '/api/calls?limit=100');
+    const data = await api('GET', `/api/calls?limit=${OUTBOUND_PAGE_SIZE}&offset=${requestedOffset}`);
+    if (sequence !== outboundLoadSequence) return;
+    const lastOffset = Math.max(0, Math.floor((data.total - 1) / OUTBOUND_PAGE_SIZE) * OUTBOUND_PAGE_SIZE);
+    if (requestedOffset > lastOffset) return loadOutbound(lastOffset);
+    outboundTotal = data.total;
     document.getElementById('calls-count').textContent =
-      `${data.total} call${data.total!==1?'s':''} — ${data.items.filter(t=>t.status==='pending').length} pending`;
+      `${data.total} call${data.total!==1?'s':''} total — ${data.pending_total} pending`;
+    range.textContent = data.total ? `Showing ${requestedOffset + 1}–${requestedOffset + data.items.length} of ${data.total}` : 'Showing 0 of 0';
     tbody.innerHTML = data.items.length
       ? data.items.map(buildCallRow).join('')
       : '<tr><td colspan="8"><span class="muted">No scheduled calls.</span></td></tr>';
   } catch(e) {
+    if (sequence !== outboundLoadSequence) return;
+    range.textContent = 'This page could not be loaded.';
     tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">Error: ${esc(e.message)}</td></tr>`;
+  } finally {
+    if (sequence === outboundLoadSequence) {
+      previous.disabled = outboundOffset <= 0;
+      next.disabled = outboundOffset + OUTBOUND_PAGE_SIZE >= outboundTotal;
+    }
   }
 }
 
@@ -1437,22 +1546,76 @@ function buildCallRow(t) {
     </tr>`;
 }
 
-async function createOutboundCall(e) {
-  e.preventDefault();
-  const phone = get('call-phone').trim(), mission = get('call-mission').trim();
-  if (!phone || !mission) return;
+let outboundCreateBusy = false, pendingOutboundCreate = null;
+function outboundCallPayload() {
   const body = {
-    phone_number: phone,
-    mission,
+    phone_number: get('call-phone').trim(),
+    mission: get('call-mission').trim(),
     contact_name: get('call-contact').trim(),
     max_attempts: parseInt(get('call-attempts'), 10),
   };
   const when = get('call-when');
   if (when) body.scheduled_at = new Date(when).toISOString();
-  await api('POST', '/api/calls', body);
-  document.getElementById('new-call-form').reset();
-  document.getElementById('new-call-details').open = false;
-  loadOutbound();
+  return body;
+}
+async function createOutboundCall(e) {
+  e.preventDefault();
+  if (outboundCreateBusy) return;
+  const status = document.getElementById('new-call-status');
+  let payload;
+  try { payload = outboundCallPayload(); }
+  catch (error) { status.textContent = 'Check the scheduled date and time.'; return; }
+  if (!payload.phone_number || !payload.mission) return;
+  if (pendingOutboundCreate && JSON.stringify(payload) !== pendingOutboundCreate.payloadKey) {
+    status.textContent = 'The previous request is not confirmed. Retry it, or check the call list before scheduling a separate call. Your edited mission is kept.';
+    document.getElementById('retry-call-request').hidden = false;
+    document.getElementById('checked-call-request').hidden = false;
+    return;
+  }
+  if (!pendingOutboundCreate) {
+    const request_id = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+    pendingOutboundCreate = { body: { ...payload, request_id }, payloadKey: JSON.stringify(payload) };
+  }
+  await submitPendingOutboundCall();
+}
+function acknowledgePreviousOutboundCall() {
+  if (outboundCreateBusy || !pendingOutboundCreate) return;
+  if (!confirm('Have you checked the previous request in the call list? It may already exist. Continuing keeps it and lets you schedule this draft as a separate call.')) return;
+  pendingOutboundCreate = null;
+  document.getElementById('retry-call-request').hidden = true;
+  document.getElementById('checked-call-request').hidden = true;
+  document.getElementById('new-call-status').textContent = 'The previous request is unchanged. Your draft is ready to schedule as a separate call.';
+}
+async function submitPendingOutboundCall() {
+  if (outboundCreateBusy || !pendingOutboundCreate) return;
+  const request = pendingOutboundCreate;
+  const form = document.getElementById('new-call-form');
+  const status = document.getElementById('new-call-status');
+  const retry = document.getElementById('retry-call-request');
+  const checked = document.getElementById('checked-call-request');
+  const controls = Array.from(form.elements).map(el => [el, el.disabled]);
+  outboundCreateBusy = true; controls.forEach(([el]) => { el.disabled = true; });
+  status.textContent = 'Submitting call request…';
+  try {
+    const result = await api('POST', '/api/calls', request.body);
+    pendingOutboundCreate = null; retry.hidden = checked.hidden = true;
+    const unchanged = JSON.stringify(outboundCallPayload()) === request.payloadKey;
+    if (unchanged) { form.reset(); document.getElementById('new-call-details').open = false; }
+    status.textContent = 'Call request #' + result.id + ' confirmed. Check its current status below.' + (unchanged ? '' : ' Your edited mission is still a draft.');
+    loadOutbound();
+  } catch (error) {
+    // Validation rejected the request before insertion. Network/server failures
+    // remain uncertain: an explicit retry must retain its key and exact payload.
+    if ([400, 422].includes(error.status)) {
+      pendingOutboundCreate = null; retry.hidden = checked.hidden = true;
+      status.textContent = 'Could not schedule: ' + error.message + '. Your mission is kept.';
+    } else {
+      retry.hidden = checked.hidden = false;
+      status.textContent = 'Request not confirmed: ' + error.message + '. Your mission is kept. Retry previous request to check it without creating a duplicate, or check the call list before scheduling a separate call.';
+    }
+  } finally {
+    outboundCreateBusy = false; controls.forEach(([el, disabled]) => { el.disabled = disabled; });
+  }
 }
 
 async function cancelOutbound(id) {
@@ -1642,7 +1805,7 @@ async function api(method, path, body) {
   if (resp.status === 401) { window.location.assign('/login'); throw new Error('Please sign in again.'); }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || resp.statusText);
+    const error = new Error(err.detail || resp.statusText); error.status = resp.status; throw error;
   }
   return resp.json();
 }
@@ -1672,6 +1835,9 @@ updateThemeBtn();
 loadStatus();
 loadConfig();
 loadDict();
+if (new URLSearchParams(location.search).get('settings') === 'connection') {
+  showTab('setup'); showSubTab('prismlink', document.getElementById('prism-connection-tab'));
+}
 </script>
 </body>
 </html>

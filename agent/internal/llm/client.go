@@ -297,8 +297,10 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 	}
 
 	var result struct {
+		Error   json.RawMessage `json:"error"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content   string `json:"content"`
 				ToolCalls []struct {
 					ID       string `json:"id"`
@@ -314,12 +316,18 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 	if err := json.Unmarshal(data, &result); err != nil {
 		return "", nil, fmt.Errorf("sglang decode: %w", err)
 	}
+	if len(result.Error) > 0 && string(result.Error) != "null" {
+		return "", nil, fmt.Errorf("llm completion: provider error")
+	}
 	if len(result.Choices) == 0 {
 		return "", nil, fmt.Errorf("sglang: empty choices")
 	}
 
 	msg := result.Choices[0].Message
 	content := strings.TrimSpace(msg.Content)
+	if reason := result.Choices[0].FinishReason; reason != "" && !normalFinishReason(reason) {
+		return content, nil, fmt.Errorf("llm completion stopped: %s", reason)
+	}
 	// Strip residual thinking block if reasoning parser left it in content
 	if idx := strings.Index(content, "</think>"); idx >= 0 {
 		content = strings.TrimSpace(content[idx+len("</think>"):])
@@ -327,9 +335,12 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 
 	var toolCalls []ToolCall
 	for _, tc := range msg.ToolCalls {
-		var args map[string]interface{}
-		if tc.Function.Arguments != "" {
-			json.Unmarshal([]byte(tc.Function.Arguments), &args) //nolint:errcheck
+		if strings.TrimSpace(tc.Function.Name) == "" {
+			return content, nil, fmt.Errorf("llm tool call: missing name")
+		}
+		args, err := parseToolArguments(tc.Function.Arguments)
+		if err != nil {
+			return content, nil, err
 		}
 		toolCalls = append(toolCalls, ToolCall{
 			ID:        tc.ID,
@@ -340,7 +351,11 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 
 	// Fallback: parse <tool_call> tags from content when structured tool_calls is empty
 	if len(toolCalls) == 0 && strings.Contains(content, "<tool_call>") {
-		if parsed := parseRawToolCallTags(content); len(parsed) > 0 {
+		parsed, err := parseRawToolCallTags(content)
+		if err != nil {
+			return content, nil, err
+		}
+		if len(parsed) > 0 {
 			toolCalls = parsed
 			content = ""
 		}
@@ -348,7 +363,11 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 
 	// Recover tool calls the model wrote as plain function-call text (e.g.
 	// "end_call()") so they aren't spoken and the intent is honored.
-	if cleaned, inline := stripInlineToolCalls(content); len(inline) > 0 {
+	cleaned, inline, err := stripInlineToolCalls(content)
+	if err != nil {
+		return content, nil, err
+	}
+	if len(inline) > 0 {
 		content = cleaned
 		toolCalls = append(toolCalls, inline...)
 	}
@@ -409,7 +428,7 @@ func (c *Client) streamInner(
 	userText string,
 	sentCh chan<- string,
 	toolsCh chan<- []ToolCall,
-) error {
+) (streamErr error) {
 	fullSystem := systemPrompt
 	if contactsCtx != "" {
 		fullSystem += "\n\n" + contactsCtx
@@ -480,6 +499,19 @@ func (c *Client) streamInner(
 
 	var textBuf strings.Builder    // accumulates content text
 	var rawToolBuf strings.Builder // accumulates raw <tool_call>...</tool_call> text
+	// Keep safe partial speech on transport/provider failure, but never publish a
+	// partially received tool invocation as speech or as an executable action.
+	defer func() {
+		if streamErr == nil || ctx.Err() != nil || inRawToolMode {
+			return
+		}
+		if tail := partialSpeech(textBuf.String()); tail != "" {
+			select {
+			case sentCh <- tail:
+			case <-ctx.Done():
+			}
+		}
+	}()
 
 	// inlineCalls collects tool calls the model wrote as plain function-call text
 	// (stripped from what we speak; emitted to toolsCh at stream end).
@@ -487,7 +519,10 @@ func (c *Client) streamInner(
 
 	// emitSent strips inline tool-call syntax from text already filtered for reasoning.
 	emitSent := func(s string) error {
-		clean, calls := stripInlineToolCalls(s)
+		clean, calls, err := parseCompatibilityToolText(s)
+		if err != nil {
+			return err
+		}
 		inlineCalls = append(inlineCalls, calls...)
 		s = clean
 		if strings.TrimSpace(s) == "" {
@@ -501,20 +536,28 @@ func (c *Client) streamInner(
 		return nil
 	}
 
+	terminal := false
+	finished := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		payload := strings.TrimPrefix(line, "data: ")
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
 		if payload == "[DONE]" {
+			terminal = true
 			break
 		}
 
 		var chunk struct {
+			Error   json.RawMessage `json:"error"`
 			Choices []struct {
-				Delta struct {
+				FinishReason string `json:"finish_reason"`
+				Delta        struct {
 					Content   string `json:"content"`
 					ToolCalls []struct {
 						Index    int    `json:"index"`
@@ -528,12 +571,28 @@ func (c *Client) streamInner(
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue
+			return fmt.Errorf("llm stream: invalid event JSON")
+		}
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			return fmt.Errorf("llm stream: provider error")
 		}
 		if len(chunk.Choices) == 0 {
 			continue
 		}
 		delta := chunk.Choices[0].Delta
+		if finished && (delta.Content != "" || len(delta.ToolCalls) > 0) {
+			return fmt.Errorf("llm stream: data after finish")
+		}
+		if reason := chunk.Choices[0].FinishReason; reason != "" {
+			if !normalFinishReason(reason) {
+				// Preserve content in a final truncated chunk without releasing tools.
+				if !inStructuredToolMode && !inRawToolMode {
+					textBuf.WriteString(filter.Feed(delta.Content))
+				}
+				return fmt.Errorf("llm stream stopped: %s", reason)
+			}
+			terminal, finished = true, true
+		}
 
 		if !firstChunkLogged && (delta.Content != "" || len(delta.ToolCalls) > 0) {
 			firstChunkLogged = true
@@ -543,6 +602,9 @@ func (c *Client) streamInner(
 
 		// Structured tool calls (delta.tool_calls) take priority
 		if len(delta.ToolCalls) > 0 {
+			if !inStructuredToolMode && (inRawToolMode || inlineToolStart(textBuf.String()) >= 0) {
+				return fmt.Errorf("llm stream: mixed tool invocation formats")
+			}
 			inStructuredToolMode = true
 			for _, tc := range delta.ToolCalls {
 				acc, ok := toolAccs[tc.Index]
@@ -597,6 +659,12 @@ func (c *Client) streamInner(
 			textBuf.Reset()
 			continue
 		}
+		// A compatibility invocation may contain sentence punctuation inside an
+		// argument. Keep it whole until completion instead of speaking or parsing
+		// a prefix while the provider is still sending its arguments.
+		if inlineToolStart(textBuf.String()) >= 0 {
+			continue
+		}
 
 		// Emit complete sentences as soon as they are ready
 		for {
@@ -620,6 +688,12 @@ func (c *Client) streamInner(
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("stream scan: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !terminal {
+		return fmt.Errorf("llm stream interrupted before completion")
+	}
 
 	privacy.Logf("llm: stream end — structuredTool=%v rawTool=%v textBuf=%q rawToolBuf=%q toolAccs=%d",
 		inStructuredToolMode, inRawToolMode, textBuf.String(), rawToolBuf.String(), len(toolAccs))
@@ -627,19 +701,12 @@ func (c *Client) streamInner(
 	// Plain text response
 	if !inStructuredToolMode && !inRawToolMode {
 		tail := textBuf.String()
-
-		// Detect raw JSON tool calls the model emitted as plain text
-		if inlineCalls := tryParseInlineToolCalls(tail); len(inlineCalls) > 0 {
-			log.Printf("llm: inline JSON tool call in text buffer — %d call(s), discarding garbage prefix", len(inlineCalls))
-			select {
-			case toolsCh <- inlineCalls:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			return nil
+		tail, tailCalls, err := parseCompatibilityToolText(strings.TrimSpace(tail))
+		if err != nil {
+			return err
 		}
-		tail, tailCalls := stripInlineToolCalls(strings.TrimSpace(tail))
 		inlineCalls = append(inlineCalls, tailCalls...)
+		textBuf.Reset() // the tail below must not replay if a later send is cancelled
 		if tail != "" {
 			select {
 			case sentCh <- tail:
@@ -671,14 +738,24 @@ func (c *Client) streamInner(
 	calls := make([]ToolCall, 0, len(toolAccs))
 	for _, idx := range indices {
 		acc := toolAccs[idx]
-		var args map[string]interface{}
-		json.Unmarshal([]byte(acc.args.String()), &args) //nolint:errcheck
+		args, err := parseToolArguments(acc.args.String())
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(acc.name) == "" {
+			return fmt.Errorf("llm tool call: missing name")
+		}
 		calls = append(calls, ToolCall{ID: acc.id, Name: acc.name, Arguments: args})
 	}
 
 	// Fallback: parse raw <tool_call>...</tool_call> tags
 	if len(calls) == 0 && inRawToolMode {
-		calls = parseRawToolCallTags(rawToolBuf.String())
+		var err error
+		calls, err = parseRawToolCallTags(rawToolBuf.String())
+		if err != nil {
+			return err
+		}
+		calls = append(inlineCalls, calls...)
 	}
 
 	if len(calls) > 0 {
@@ -698,6 +775,47 @@ func (c *Client) streamInner(
 // in the text it gets spoken aloud and the real tool never fires. Parens are
 // required so we never match a tool name mentioned in normal speech.
 var inlineFnCallRE = regexp.MustCompile(`(?i)\b(end_call|transfer_call|take_message|accept_call|decline_call)\s*\(([^()]*)\)`)
+var inlineFnStartRE = regexp.MustCompile(`(?i)\b(end_call|transfer_call|take_message|accept_call|decline_call)\s*\(`)
+
+func normalFinishReason(reason string) bool {
+	return reason == "stop" || reason == "tool_calls" || reason == "function_call"
+}
+
+// Empty arguments remain compatible with providers' parameterless tool calls.
+// Present arguments must be a complete JSON object: null, arrays and malformed
+// JSON cannot silently turn into a parameterless end_call.
+func parseToolArguments(raw string) (map[string]interface{}, error) {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]interface{}{}, nil
+	}
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil || args == nil {
+		return nil, fmt.Errorf("llm tool call: arguments must be a complete JSON object")
+	}
+	return args, nil
+}
+
+func partialSpeech(text string) string {
+	// A failed stream may end inside any of the compatibility tool syntaxes.
+	// Preserve the preceding speech, without reading the invocation itself aloud.
+	if cut := inlineToolStart(text); cut >= 0 {
+		text = text[:cut]
+	}
+	return strings.TrimSpace(text)
+}
+
+func inlineToolStart(text string) int {
+	cut := -1
+	for _, marker := range []string{"<tool_call", `{"name":`, `{ "name":`} {
+		if i := strings.Index(text, marker); i >= 0 && (cut < 0 || i < cut) {
+			cut = i
+		}
+	}
+	if loc := inlineFnStartRE.FindStringIndex(text); loc != nil && (cut < 0 || loc[0] < cut) {
+		cut = loc[0]
+	}
+	return cut
+}
 
 // inlineKwargRE matches a single key=value pair inside Python-style kwargs, e.g.
 // destination="Vincent", reason='...'. Values may be double/single-quoted or bare.
@@ -706,79 +824,147 @@ var inlineKwargRE = regexp.MustCompile(`(\w+)\s*=\s*("[^"]*"|'[^']*'|[^,]+)`)
 // parseInlineArgs decodes the argument body of an inline tool call. Gemma emits
 // either a JSON object (transfer_call({"destination": "Vincent"})) or Python kwargs
 // (transfer_call(destination="Vincent")) — handle both.
-func parseInlineArgs(body string) map[string]interface{} {
+func parseInlineArgs(body string) (map[string]interface{}, error) {
 	args := map[string]interface{}{}
 	body = strings.TrimSpace(body)
 	if body == "" {
-		return args
+		return args, nil
 	}
 	if strings.HasPrefix(body, "{") {
-		json.Unmarshal([]byte(body), &args) //nolint:errcheck
-		return args
+		return parseToolArguments(body)
 	}
-	for _, m := range inlineKwargRE.FindAllStringSubmatch(body, -1) {
-		args[m[1]] = strings.Trim(strings.TrimSpace(m[2]), `"'`)
+	matches := inlineKwargRE.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("llm inline tool call: invalid arguments")
 	}
-	return args
+	end := 0
+	for i, m := range matches {
+		separator := strings.TrimSpace(body[end:m[0]])
+		if (i == 0 && separator != "") || (i > 0 && separator != ",") {
+			return nil, fmt.Errorf("llm inline tool call: invalid arguments")
+		}
+		value := strings.TrimSpace(body[m[4]:m[5]])
+		if len(value) > 0 && (value[0] == '\'' || value[0] == '"') && (len(value) < 2 || value[len(value)-1] != value[0]) {
+			return nil, fmt.Errorf("llm inline tool call: incomplete quoted argument")
+		}
+		args[body[m[2]:m[3]]] = strings.Trim(value, `"'`)
+		end = m[1]
+	}
+	if strings.TrimSpace(body[end:]) != "" {
+		return nil, fmt.Errorf("llm inline tool call: invalid arguments")
+	}
+	return args, nil
 }
 
 // stripInlineToolCalls removes inline function-call syntax for known tools from a
 // chunk of model text, returning the cleaned text and any recovered tool calls so
 // the caller can honor the intent instead of speaking it.
-func stripInlineToolCalls(s string) (string, []ToolCall) {
+func stripInlineToolCalls(s string) (string, []ToolCall, error) {
 	matches := inlineFnCallRE.FindAllStringSubmatch(s, -1)
+	if len(inlineFnStartRE.FindAllStringIndex(s, -1)) != len(matches) {
+		return s, nil, fmt.Errorf("llm inline tool call: incomplete invocation")
+	}
 	if len(matches) == 0 {
-		return s, nil
+		return s, nil, nil
 	}
 	calls := make([]ToolCall, 0, len(matches))
 	for _, m := range matches {
-		calls = append(calls, ToolCall{Name: strings.ToLower(m[1]), Arguments: parseInlineArgs(m[2])})
+		args, err := parseInlineArgs(m[2])
+		if err != nil {
+			return s, nil, err
+		}
+		calls = append(calls, ToolCall{Name: strings.ToLower(m[1]), Arguments: args})
 	}
-	return strings.TrimSpace(inlineFnCallRE.ReplaceAllString(s, "")), calls
+	return strings.TrimSpace(inlineFnCallRE.ReplaceAllString(s, "")), calls, nil
+}
+
+// Validate the text outside XML tool bodies as part of the same batch. JSON
+// arguments stay opaque, so tool-like text inside a JSON string is not parsed
+// again as an invocation. Ordinary prose remains speech.
+func parseCompatibilityToolText(text string) (string, []ToolCall, error) {
+	jsonStart := -1
+	for _, marker := range []string{`{"name":`, `{ "name":`} {
+		if i := strings.Index(text, marker); i >= 0 && (jsonStart < 0 || i < jsonStart) {
+			jsonStart = i
+		}
+	}
+	prefix := text
+	if jsonStart >= 0 {
+		prefix = text[:jsonStart]
+	}
+	if strings.Contains(prefix, "<tool_call") {
+		return text, nil, fmt.Errorf("llm raw tool call: incomplete tag")
+	}
+	clean, calls, err := stripInlineToolCalls(prefix)
+	if err != nil || jsonStart < 0 {
+		return clean, calls, err
+	}
+	rawCalls, err := tryParseInlineToolCalls(text[jsonStart:])
+	if err != nil {
+		return text, nil, err
+	}
+	// Retain the raw JSON fallback's existing discarded-prefix behavior.
+	return "", append(calls, rawCalls...), nil
 }
 
 // parseRawToolCallTags extracts tool calls from two Qwen native formats:
 //  1. JSON body:     <tool_call>{"name":"fn","arguments":{...}}</tool_call>
 //  2. Function body: <tool_call>\n<function=fn>\n<parameter=k>\nv\n</parameter>...\n</function>\n</tool_call>
-func parseRawToolCallTags(s string) []ToolCall {
+func parseRawToolCallTags(s string) ([]ToolCall, error) {
 	var calls []ToolCall
 	for {
 		start := strings.Index(s, "<tool_call>")
+		gap := s
+		if start >= 0 {
+			gap = s[:start]
+		}
+		_, gapCalls, err := parseCompatibilityToolText(gap)
+		if err != nil {
+			return nil, err
+		}
+		calls = append(calls, gapCalls...)
 		if start < 0 {
 			break
 		}
 		end := strings.Index(s[start:], "</tool_call>")
 		if end < 0 {
-			break
+			return nil, fmt.Errorf("llm raw tool call: incomplete tag")
 		}
 		body := strings.TrimSpace(s[start+len("<tool_call>") : start+end])
 		s = s[start+end+len("</tool_call>"):]
 
 		// Format 1: JSON body
 		var obj struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
 		}
 		if err := json.Unmarshal([]byte(body), &obj); err == nil && obj.Name != "" {
+			args, err := parseToolArguments(string(obj.Arguments))
+			if err != nil {
+				return nil, err
+			}
 			calls = append(calls, ToolCall{
 				ID:        fmt.Sprintf("call_%d", len(calls)),
 				Name:      obj.Name,
-				Arguments: obj.Arguments,
+				Arguments: args,
 			})
 			continue
 		}
 
 		// Format 2: <function=NAME>\n<parameter=KEY>\nVALUE\n</parameter>...\n</function>
-		if fnIdx := strings.Index(body, "<function="); fnIdx >= 0 {
-			fnRest := body[fnIdx+len("<function="):]
+		if strings.HasPrefix(body, "<function=") {
+			fnRest := body[len("<function="):]
 			fnNameEnd := strings.Index(fnRest, ">")
 			if fnNameEnd < 0 {
-				continue
+				return nil, fmt.Errorf("llm raw tool call: incomplete function")
 			}
 			fnName := strings.TrimSpace(fnRest[:fnNameEnd])
 			fnEnd := strings.Index(fnRest, "</function>")
-			if fnEnd < 0 {
-				fnEnd = len(fnRest)
+			if fnEnd < fnNameEnd+1 {
+				return nil, fmt.Errorf("llm raw tool call: incomplete function")
+			}
+			if strings.TrimSpace(fnRest[fnEnd+len("</function>"):]) != "" {
+				return nil, fmt.Errorf("llm raw tool call: trailing function data")
 			}
 			fnBody := fnRest[fnNameEnd+1 : fnEnd]
 			args := make(map[string]interface{})
@@ -786,17 +972,23 @@ func parseRawToolCallTags(s string) []ToolCall {
 			for {
 				pStart := strings.Index(rem, "<parameter=")
 				if pStart < 0 {
+					if strings.TrimSpace(rem) != "" {
+						return nil, fmt.Errorf("llm raw tool call: invalid parameter data")
+					}
 					break
+				}
+				if strings.TrimSpace(rem[:pStart]) != "" {
+					return nil, fmt.Errorf("llm raw tool call: invalid parameter data")
 				}
 				pRest := rem[pStart+len("<parameter="):]
 				pKeyEnd := strings.Index(pRest, ">")
 				if pKeyEnd < 0 {
-					break
+					return nil, fmt.Errorf("llm raw tool call: incomplete parameter")
 				}
 				paramKey := strings.TrimSpace(pRest[:pKeyEnd])
 				pEnd := strings.Index(pRest, "</parameter>")
-				if pEnd < 0 {
-					break
+				if pEnd < pKeyEnd+1 || paramKey == "" {
+					return nil, fmt.Errorf("llm raw tool call: incomplete parameter")
 				}
 				paramVal := strings.TrimSpace(pRest[pKeyEnd+1 : pEnd])
 				args[paramKey] = paramVal
@@ -808,17 +1000,19 @@ func parseRawToolCallTags(s string) []ToolCall {
 					Name:      fnName,
 					Arguments: args,
 				})
+				continue
 			}
 		}
+		return nil, fmt.Errorf("llm raw tool call: invalid invocation")
 	}
-	return calls
+	return calls, nil
 }
 
 // tryParseInlineToolCalls scans text for a raw JSON tool call pattern the model
 // emitted as plain text, e.g. {"name":"transfer_call","arguments":{...}}.
 // If found, it returns the parsed ToolCalls (the text before the JSON is discarded
 // as it is typically incomplete garbage). Returns nil if no pattern is found.
-func tryParseInlineToolCalls(text string) []ToolCall {
+func tryParseInlineToolCalls(text string) ([]ToolCall, error) {
 	for _, needle := range []string{`{"name":`, `{ "name":`} {
 		idx := strings.Index(text, needle)
 		if idx < 0 {
@@ -830,17 +1024,23 @@ func tryParseInlineToolCalls(text string) []ToolCall {
 		}
 		dec := json.NewDecoder(strings.NewReader(text[idx:]))
 		if err := dec.Decode(&obj); err != nil || obj.Name == "" {
-			continue
+			return nil, fmt.Errorf("llm inline tool call: invalid JSON invocation")
 		}
-		var args map[string]interface{}
-		json.Unmarshal(obj.Arguments, &args) //nolint:errcheck
+		var trailing interface{}
+		if err := dec.Decode(&trailing); err != io.EOF {
+			return nil, fmt.Errorf("llm inline tool call: trailing invocation data")
+		}
+		args, err := parseToolArguments(string(obj.Arguments))
+		if err != nil {
+			return nil, err
+		}
 		return []ToolCall{{
 			ID:        "call_inline_0",
 			Name:      obj.Name,
 			Arguments: args,
-		}}
+		}}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // sentenceBoundary returns the index of the end-of-sentence punctuation in s,

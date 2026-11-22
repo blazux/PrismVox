@@ -1,5 +1,5 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26.11-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev
 
@@ -11,7 +11,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o /agent ./cmd/agent
 
 # ── Final stage ───────────────────────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates libgcc
 

@@ -19,7 +19,7 @@ fixtures={
 '/api/mcp':[{'id':1,'name':'Service tools','type':'http','url':'http://tools.example.test/mcp','enabled':True}],
 '/api/mcp/1/tools':[{'name':'lookup_appointment','description':'Find an appointment','enabled':True}],
 '/api/contacts':[{'id':1,'name':'Alex Morgan','phone_number':'1001','notes':'Customer support','enabled':True,'transfer_type':'attended'}],
-'/api/calls':{'items':[],'total':0},'/api/call-logs':{'items':[],'total':0},'/api/conversations':{'items':[],'total':0},
+'/api/calls':{'items':[],'total':0,'pending_total':0,'offset':0},'/api/call-logs':{'items':[],'total':0},'/api/conversations':{'items':[],'total':0},
 }
 with sync_playwright() as p:
  options={'headless':True}
