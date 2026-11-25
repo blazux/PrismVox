@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"phoneagent/internal/audio"
+	"phoneagent/internal/httpguard"
 	"phoneagent/internal/voice"
 	"strings"
 	"sync/atomic"
@@ -292,7 +293,7 @@ func (c *Client) transcribeEleven(ctx context.Context, wav []byte) (string, erro
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("xi-api-key", c.settings.APIKey)
-	resp, err := c.http.Do(req)
+	resp, err := httpguard.Do(c.http, req)
 	if err != nil {
 		return "", errors.New("STT provider request failed")
 	}

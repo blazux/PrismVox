@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"phoneagent/internal/httpguard"
 	"phoneagent/internal/privacy"
 )
 
@@ -82,8 +83,8 @@ func New() *Client {
 		URL:        openAIBaseURL(),
 		Model:      m,
 		APIKey:     os.Getenv("OPENAI_API_KEY"),
-		http:       &http.Client{Timeout: 120 * time.Second},
-		streamHTTP: &http.Client{},
+		http:       &http.Client{Timeout: 120 * time.Second, CheckRedirect: httpguard.SameOriginRedirect},
+		streamHTTP: &http.Client{CheckRedirect: httpguard.SameOriginRedirect},
 		PrismURL:   strings.TrimRight(envAny("PRISM_URL", "CORTEX_URL"), "/"),
 		PrismToken: envAny("PRISM_TOKEN", "CORTEX_TOKEN"),
 		SessionID:  newSessionID(),
@@ -282,7 +283,7 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 	req.Header.Set("Content-Type", "application/json")
 	c.authorize(req)
 
-	resp, err := c.http.Do(req)
+	resp, err := httpguard.Do(c.http, req)
 	if err != nil {
 		return "", nil, err
 	}
@@ -292,7 +293,7 @@ func (c *Client) chatCompletions(ctx context.Context, reqBody map[string]interfa
 	if err != nil {
 		return "", nil, err
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode/100 != 2 {
 		return "", nil, fmt.Errorf("sglang HTTP %d: %s", resp.StatusCode, string(data))
 	}
 
@@ -473,13 +474,13 @@ func (c *Client) streamInner(
 	c.authorize(req)
 
 	reqStart := time.Now() // latency diag: time-to-first-token
-	resp, err := c.streamHTTP.Do(req)
+	resp, err := httpguard.Do(c.streamHTTP, req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode/100 != 2 {
 		data, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("sglang HTTP %d: %s", resp.StatusCode, data)
 	}

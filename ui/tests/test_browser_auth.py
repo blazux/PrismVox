@@ -101,6 +101,21 @@ class BrowserAuthTests(unittest.IsolatedAsyncioTestCase):
         self.module.UI_PASSWORD = ''
         self.assertEqual((await self.client.get('/login')).status_code, 303)
 
+    async def test_basic_browser_writes_require_same_origin_without_breaking_api_clients(self):
+        basic = 'Basic ' + base64.b64encode('admin:fixture-password-é'.encode()).decode()
+        for extra in ({'Origin':'https://evil.example'}, {'Origin':'null'},
+                      {'Sec-Fetch-Site':'cross-site'}):
+            headers = {'Authorization':basic, **extra}
+            self.assertEqual((await self.client.post('/api/auth-fixture', headers=headers)).status_code, 403)
+            self.assertEqual((await self.client.post('/api/agent-chat', headers=headers)).status_code, 403)
+        for extra in ({}, {'Origin':'https://vox.example.test'}):
+            self.assertEqual((await self.client.post('/api/auth-fixture',
+                headers={'Authorization':basic, **extra})).status_code, 200)
+        # A valid cookie must not let an accompanying Basic header bypass CSRF.
+        await self.login()
+        self.assertEqual((await self.client.post('/api/auth-fixture', headers={
+            'Authorization':basic, 'Origin':'https://evil.example'})).status_code, 403)
+
     async def test_failures_throttling_and_cross_origin_login(self):
         response = await self.client.post('/auth/login', data={'username':'admin', 'password':'wrong'},
                                            headers={'Origin':'https://evil.example', 'Accept':'application/json'})

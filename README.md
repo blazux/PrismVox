@@ -90,7 +90,7 @@ tag for all three PrismVox images through `.env`; `DOCKERHUB_NAMESPACE` defaults
 | --- | --- |
 | Call agent | `blazux/prismvox-agent` |
 | Console | `blazux/prismvox-ui` |
-| SIP server | `blazux/prismvox-asterisk` |
+| SIP server (Asterisk 20.22 LTS) | `blazux/prismvox-asterisk` |
 
 To update, retrieve the current Compose files with `git pull`, then run:
 
@@ -541,11 +541,16 @@ explicit saved provider choices remain unchanged.
 ## Security
 
 Use distinct strong credentials and a trusted HTTPS reverse proxy for remote
-administration. An empty console password or agent API key leaves that surface
-open; keep it on a trusted network only. Asterisk's ARI and PostgreSQL are not
+administration. Set `UI_PASSWORD` to protect the console and administration APIs.
+Agent endpoints accept `AGENT_API_KEY` or the configured console authentication;
+they are open only when both credentials are empty. Asterisk's ARI and PostgreSQL are not
 published on host ports. Restrict SIP/media traffic to your carrier or PBX.
 TLS trunk certificate verification is enabled for new installations; configure
 your carrier's CA when needed. UDP does not encrypt SIP or media.
+
+Model and speech API requests can follow redirects within the same scheme, host
+and port. Redirects to another server origin are rejected; configure the final API
+address so credentials, conversations and audio reach the intended service.
 
 Routine logs omit conversation content. `LOG_SENSITIVE_DATA=true` and
 `DEBUG=true` can expose transcripts or SIP details; disable them after debugging.

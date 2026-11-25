@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"phoneagent/internal/privacy"
 	"strconv"
@@ -185,10 +186,7 @@ func main() {
 	ariAppEnv := envDefault("ARI_APP", "phoneagent")
 
 	baseURL := fmt.Sprintf("http://%s:%s/ari", ariHost, ariPort)
-	wsURL := fmt.Sprintf(
-		"ws://%s:%s/ari/events?app=%s&api_key=%s:%s&subscribeAll=false",
-		ariHost, ariPort, ariAppEnv, ariUser, ariPass,
-	)
+	wsURL := ariEventsURL(ariHost, ariPort, ariAppEnv)
 
 	ariClient := ari.New(baseURL, ariUser, ariPass)
 
@@ -198,6 +196,13 @@ func main() {
 	}
 
 	run(ctx, wsURL, ariUser, ariPass, ariClient, pool, coord)
+}
+
+func ariEventsURL(host, port, app string) string {
+	// Basic authentication is set on the WebSocket handshake. Credentials must
+	// not also appear in a URL that HTTP infrastructure may record.
+	query := url.Values{"app": {app}, "subscribeAll": {"false"}}
+	return fmt.Sprintf("ws://%s:%s/ari/events?%s", host, port, query.Encode())
 }
 
 // ── Outbound call queue ────────────────────────────────────────────────────────

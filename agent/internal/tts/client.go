@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"phoneagent/internal/audio"
+	"phoneagent/internal/httpguard"
 	"phoneagent/internal/voice"
 	"strings"
 	"sync"
@@ -51,8 +52,13 @@ func New() *Client {
 		cacheDir = ""
 	}
 	return &Client{
-		URL:      u,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		URL: u,
+		http: &http.Client{
+			Timeout: 30 * time.Second,
+			// Speech requests contain private text and provider credentials.
+			// Only path redirects at the configured origin may receive them.
+			CheckRedirect: httpguard.SameOriginRedirect,
+		},
 		cacheDir: cacheDir,
 	}
 }
@@ -137,7 +143,7 @@ func (c *Client) synthesizeAt(ctx context.Context, url string, jsonBody []byte) 
 		req.Header.Set("Authorization", "Bearer "+c.settings.ServiceAPIKey)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := httpguard.Do(c.http, req)
 	if err != nil {
 		log.Printf("tts: error: %v", err)
 		return nil, err

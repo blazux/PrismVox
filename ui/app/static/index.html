@@ -1307,7 +1307,7 @@ async function loadMCP() {
       <summary style="display:flex;align-items:center;gap:.5rem;list-style:none;cursor:pointer" onclick="mcpToggleDetails(event,${s.id})">
         <span class="flex-1">
           <strong style="font-size:.82rem">${esc(s.name)}</strong>
-          <span class="muted"> [${s.type}]</span><br>
+          <span class="muted"> [${esc(s.type)}]</span><br>
           <span class="muted" style="font-size:.72rem">${s.type==='stdio' ? esc(JSON.stringify(s.command)) : esc(s.url||'')}</span>
         </span>
         <span style="display:inline-flex;align-items:center;gap:.3rem">

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 import aiohttp
+import api_transport
 import browser_auth
 import secret_store
 import voice_config
@@ -246,8 +247,15 @@ async def auth_middleware(request: Request, call_next):
     header = request.headers.get("authorization", "")
     if path in browser_auth.PUBLIC_PATHS:
         return await call_next(request)
+    basic_auth = bool(UI_PASSWORD) and _basic_ok(header)
+    # Browsers can attach cached HTTP Basic credentials to cross-site forms.
+    # Keep API clients without Origin working, but reject foreign browser writes
+    # before either the admin or agent surface accepts the credential.
+    if (basic_auth and request.method not in ("GET", "HEAD", "OPTIONS")
+            and not browser_auth.same_origin(request)):
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
     browser_session = browser_auth.session_ok(request, UI_USER, UI_PASSWORD)
-    if browser_session and not _basic_ok(header):
+    if browser_session and not basic_auth:
         if not browser_auth.cookie_write_ok(request):
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         response = await call_next(request)
@@ -258,13 +266,13 @@ async def auth_middleware(request: Request, call_next):
         # able to use the "Tester l'agent" tab).
         if not AGENT_API_KEY and not UI_PASSWORD:
             return await call_next(request)
-        if (AGENT_API_KEY and _bearer_ok(header)) or (UI_PASSWORD and _basic_ok(header)):
+        if (AGENT_API_KEY and _bearer_ok(header)) or basic_auth:
             return await call_next(request)
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
     if not UI_PASSWORD:
         return await call_next(request)
-    if _basic_ok(header):
+    if basic_auth:
         return await call_next(request)
     if request.method in ("GET", "HEAD") and "text/html" in request.headers.get("accept", ""):
         return RedirectResponse("/login", status_code=303, headers={"Cache-Control": "no-store"})
@@ -281,8 +289,10 @@ if not UI_PASSWORD:
         "UI_PASSWORD is unset — the admin UI and its APIs (config, outbound calls, "
         "MCP servers) are reachable by anyone who can open port 7860. Set it in .env."
     )
-if not AGENT_API_KEY:
+if not AGENT_API_KEY and not UI_PASSWORD:
     logger.warning("AGENT_API_KEY is unset — /api/agent-chat and /v1/chat/completions are open.")
+elif not AGENT_API_KEY:
+    logger.info("AGENT_API_KEY is unset — agent clients require the configured UI authentication.")
 
 
 def _pool_or_error() -> asyncpg.Pool:
@@ -618,7 +628,7 @@ async def _ari_reload_pjsip() -> tuple[bool, str]:
     auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
     url  = f"{ARI_URL}/ari/asterisk/modules/res_pjsip.so"
     try:
-        async with aiohttp.ClientSession(auth=auth) as s:
+        async with api_transport.session(auth=auth) as s:
             async with s.put(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status in (200, 204):
                     return True, "res_pjsip reloaded"
@@ -647,7 +657,7 @@ async def sip_status():
     state = "unreachable"
     auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
     try:
-        async with aiohttp.ClientSession(auth=auth) as s:
+        async with api_transport.session(auth=auth) as s:
             async with s.get(
                 f"{ARI_URL}/ari/endpoints/PJSIP/phoneagent-endpoint",
                 timeout=aiohttp.ClientTimeout(total=3),
@@ -1193,7 +1203,7 @@ async def runtime_status():
     active_calls = 0
     try:
         auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
-        async with aiohttp.ClientSession(auth=auth) as s:
+        async with api_transport.session(auth=auth) as s:
             async with s.get(
                 f"{ARI_URL}/ari/endpoints/PJSIP/phoneagent-endpoint",
                 timeout=aiohttp.ClientTimeout(total=3),
@@ -1274,7 +1284,7 @@ async def runtime_status():
 
 async def _http_health(url: str) -> str:
     try:
-        async with aiohttp.ClientSession() as s:
+        async with api_transport.session() as s:
             async with s.get(url, timeout=aiohttp.ClientTimeout(total=3)) as r:
                 return "ok" if r.status < 400 else f"http_{r.status}"
     except Exception:
@@ -1284,7 +1294,7 @@ async def _http_health(url: str) -> str:
 async def _model_health(endpoint: str, headers: dict) -> str:
     """Probe the compatible API without generating text or assuming /health."""
     try:
-        async with aiohttp.ClientSession() as client:
+        async with api_transport.session() as client:
             async with client.get(endpoint.rstrip('/') + '/models', headers=headers,
                                   allow_redirects=False, timeout=aiohttp.ClientTimeout(total=3)) as response:
                 if response.status in (404, 405):
@@ -1307,7 +1317,7 @@ async def tts_backend():
             raise HTTPException(503, 'Configure the speech provider and choose a voice')
         return {'backend': 'elevenlabs', 'clone_enabled': True}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_transport.session() as session:
             async with session.get(f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/health", timeout=aiohttp.ClientTimeout(total=5)) as response:
                 response.raise_for_status()
                 info = await response.json()
@@ -1331,7 +1341,7 @@ async def tts_list_voices():
         return {'voices':[voice] if voice else [], 'current':voice}
     if cfg['voice_tts_provider'] == 'elevenlabs':
         return await voice_config.list_voices(cfg)
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.get(f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/voices", timeout=aiohttp.ClientTimeout(total=10)) as r:
             return JSONResponse(await r.json(), status_code=r.status)
 
@@ -1353,7 +1363,7 @@ async def tts_set_voice(body: TTSVoiceSelect):
             raise HTTPException(404, 'Voice not found')
         await _pool_or_error().execute("INSERT INTO config(key,value) VALUES('voice_id',$1) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=NOW()", voice['voice_id'])
         return {'ok': True}
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.put(
             f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/voice", json={"name": body.name},
             timeout=aiohttp.ClientTimeout(total=10),
@@ -1386,7 +1396,7 @@ async def tts_upload_voice(file: UploadFile = File(...), name: str = Form(defaul
 
     # Mic recordings arrive as webm/opus (unsupported by the TTS store) → normalise to WAV.
     if ext not in supported:
-        async with aiohttp.ClientSession() as s:
+        async with api_transport.session() as s:
             conv = aiohttp.FormData()
             conv.add_field("file", data, filename=filename,
                            content_type=file.content_type or "audio/webm")
@@ -1405,7 +1415,7 @@ async def tts_upload_voice(file: UploadFile = File(...), name: str = Form(defaul
     form = aiohttp.FormData()
     form.add_field("file", data, filename=stored,
                    content_type="audio/wav" if ext == ".wav" else (file.content_type or "application/octet-stream"))
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.post(
             f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/voices", data=form,
             timeout=aiohttp.ClientTimeout(total=30),
@@ -1426,7 +1436,7 @@ async def tts_delete_voice(name: str):
         if voice['voice_id'] == cfg['voice_id']:
             raise HTTPException(409, 'Choose another voice before deleting the selected voice')
         return await voice_config.request(cfg, 'DELETE', '/voices/' + voice['voice_id'])
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.delete(
             f"{cfg['voice_tts_url'].removesuffix('/synthesize')}/voices/{name}",
             timeout=aiohttp.ClientTimeout(total=10),
@@ -1460,7 +1470,7 @@ async def tts_preview(body: TTSPreview):
     payload = {"text": body.text[:200]}
     if cfg['voice_service_voice']:
         payload['voice'] = cfg['voice_service_voice']
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.post(
             f"{cfg['voice_tts_url']}", json=payload,
             timeout=aiohttp.ClientTimeout(total=60),
@@ -1488,7 +1498,7 @@ async def _supervision_complete(pool, messages, tools=None, max_tokens=1200):
                "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}}
     if tools:
         payload.update(tools=tools, tool_choice="auto")
-    async with aiohttp.ClientSession() as client:
+    async with api_transport.session() as client:
         async with client.post(f"{backend_url}/chat/completions", json=payload,
                                headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as response:
             response.raise_for_status()
@@ -1987,7 +1997,7 @@ async def agent_chat(body: AgentChatMessage):
                 if tools:
                     payload["tools"] = tools
                     payload["tool_choice"] = "auto"
-                async with aiohttp.ClientSession() as s:
+                async with api_transport.session() as s:
                     async with s.post(
                         f"{backend_url}/chat/completions", json=payload, headers=backend_headers,
                         timeout=aiohttp.ClientTimeout(total=90),
@@ -2089,7 +2099,7 @@ async def _agent_run_tool_loop(messages: list[dict], tools: list, routing: dict,
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        async with aiohttp.ClientSession() as s:
+        async with api_transport.session() as s:
             async with s.post(
                 f"{backend_url}/chat/completions", json=payload, headers=backend_headers,
                 timeout=aiohttp.ClientTimeout(total=90),
@@ -2137,7 +2147,7 @@ async def _sglang_stream(messages: list[dict], model: str = ""):
         "stream":               True,
         "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False},
     }
-    async with aiohttp.ClientSession() as s:
+    async with api_transport.session() as s:
         async with s.post(
             f"{backend_url}/chat/completions", json=payload, headers=backend_headers,
             timeout=aiohttp.ClientTimeout(total=120),
@@ -2298,7 +2308,7 @@ async def voice_test(
     if speech['voice_tts_provider'] in ('elevenlabs','openai'):
         wav_bytes = await voice_config.convert_audio(audio_bytes)
     else:
-        async with aiohttp.ClientSession() as session:
+        async with api_transport.session() as session:
             form = aiohttp.FormData()
             form.add_field('file', audio_bytes, filename=audio.filename or 'audio.webm',
                            content_type=audio.content_type or 'audio/webm')
@@ -2326,7 +2336,7 @@ async def voice_test(
 
     try:
         backend_url, backend_headers = await _backend_for(pool)
-        async with aiohttp.ClientSession() as s:
+        async with api_transport.session() as s:
             async with s.post(
                 f"{backend_url}/chat/completions",
                 json={"model": await _model_for(pool), "messages": messages,
@@ -2358,7 +2368,7 @@ async def voice_test(
         if speech['voice_tts_provider'] in ('elevenlabs','openai'):
             tts_wav = await voice_config.preview(speech, reply)
         else:
-            async with aiohttp.ClientSession() as s:
+            async with api_transport.session() as s:
                 async with s.post(
                     speech['voice_tts_url'],
                     json={"text": reply},

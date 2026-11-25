@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"phoneagent/internal/httpguard"
 	"phoneagent/internal/locale"
 	"phoneagent/internal/voice"
 	"strings"
@@ -57,8 +58,12 @@ func New() *Client {
 		u = "http://stt:9000"
 	}
 	return &Client{
-		url:  strings.TrimRight(u, "/"),
-		http: &http.Client{Timeout: 30 * time.Second},
+		url: strings.TrimRight(u, "/"),
+		http: &http.Client{
+			Timeout: 30 * time.Second,
+			// Keep the caller's audio and provider key at the configured API.
+			CheckRedirect: httpguard.SameOriginRedirect,
+		},
 	}
 }
 
@@ -109,7 +114,7 @@ func (c *Client) Transcribe(ctx context.Context, wavBytes []byte) (string, error
 		req.Header.Set("Authorization", "Bearer "+c.settings.ServiceAPIKey)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := httpguard.Do(c.http, req)
 	if err != nil {
 		return "", err
 	}

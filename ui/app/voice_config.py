@@ -13,6 +13,7 @@ import wave
 from urllib.parse import urlparse, quote
 
 import aiohttp
+import api_transport
 from fastapi import HTTPException, Response
 from pydantic import BaseModel, Field
 import secret_store
@@ -123,10 +124,10 @@ def base_url():
 
 async def request(cfg, method, path, **kwargs):
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with api_transport.session(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.request(method, base_url() + path,
                                        headers={'xi-api-key': cfg['voice_api_key']}, **kwargs) as response:
-                if response.status >= 400:
+                if response.status // 100 != 2:
                     # Remote bodies may echo credentials or private text.
                     status = response.status
                     if status in (401, 403):
@@ -207,9 +208,10 @@ async def external_request(cfg, method, kind, path, **kwargs):
     if cfg['voice_service_api_key']:
         headers['Authorization'] = 'Bearer ' + cfg['voice_service_api_key']
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            async with session.request(method, cfg[f'voice_{kind}_url'].rstrip('/') + path, headers=headers, **kwargs) as response:
-                if response.status >= 400:
+        async with api_transport.session(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            async with session.request(method, cfg[f'voice_{kind}_url'].rstrip('/') + path, headers=headers,
+                                       **kwargs) as response:
+                if response.status // 100 != 2:
                     raise HTTPException(502, f'Speech service returned HTTP {response.status}; check its URL, model and voice')
                 if response.content_type == 'application/json':
                     return await response.json()

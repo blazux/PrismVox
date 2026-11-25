@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"phoneagent/internal/audio"
+	"phoneagent/internal/httpguard"
 	"phoneagent/internal/voice"
 	"strings"
 	"time"
@@ -80,7 +81,7 @@ func (c *Client) streamElevenLabs(ctx context.Context, text string, emit func([]
 	req.Header.Set("xi-api-key", c.settings.APIKey)
 	streamHTTP := *c.http
 	streamHTTP.Timeout = 0
-	resp, err := streamHTTP.Do(req)
+	resp, err := httpguard.Do(&streamHTTP, req)
 	if err != nil {
 		return fmt.Errorf("TTS provider request failed")
 	}

@@ -221,6 +221,34 @@ class VoiceSettingsTests(unittest.IsolatedAsyncioTestCase):
             await runner.cleanup()
 
 
+class ProviderRedirectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_redirect_does_not_forward_provider_key_or_audio(self):
+        leaked = []
+        async def destination(request):
+            leaked.append((request.headers.get('xi-api-key'), await request.read()))
+            return web.json_response({'ok':True})
+        target = web.Application(); target.router.add_route('*', '/capture', destination)
+        target_runner = web.AppRunner(target); await target_runner.setup()
+        self.addAsyncCleanup(target_runner.cleanup)
+        target_site = web.TCPSite(target_runner, '127.0.0.1', 0); await target_site.start()
+        location = 'http://127.0.0.1:' + str(target_site._server.sockets[0].getsockname()[1]) + '/capture'
+        async def redirect(request):
+            return web.Response(status=307, headers={'Location':location})
+        source = web.Application(); source.router.add_route('*', '/voices', redirect)
+        runner = web.AppRunner(source); await runner.setup()
+        self.addAsyncCleanup(runner.cleanup)
+        site = web.TCPSite(runner, '127.0.0.1', 0); await site.start()
+        base = 'http://127.0.0.1:' + str(site._server.sockets[0].getsockname()[1])
+        with patch.dict(os.environ, {'ELEVENLABS_BASE_URL':base}):
+            with self.assertRaises(voice_config.HTTPException):
+                await voice_config.request({'voice_api_key':'fixture-private-key'}, 'POST', '/voices', data=b'private-fixture-audio')
+        with self.assertRaises(voice_config.HTTPException):
+            await voice_config.external_request({'voice_tts_url':base,
+                'voice_service_api_key':'fixture-service-key'}, 'POST', 'tts', '/voices',
+                data=b'private-fixture-audio')
+        self.assertEqual(leaked, [])
+
+
 class AudioConversionTests(unittest.IsolatedAsyncioTestCase):
     @unittest.skipUnless(shutil.which('ffmpeg'), 'requires ffmpeg')
     async def test_browser_audio_conversion_uses_local_decoder(self):
