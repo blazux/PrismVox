@@ -83,7 +83,7 @@ from **Knowledge Base → Embedding provider**.
 ### Docker images and updates
 
 `PRISMVOX_TAG=unstable` follows builds from `main`. Use `latest` for the most recent
-versioned release, or a version tag such as `v1.0.0` to pin a release. Set the same
+versioned release, or a version tag such as `v0.2.0` to pin a release. Set the same
 tag for all three PrismVox images through `.env`; `DOCKERHUB_NAMESPACE` defaults to `blazux`.
 
 | Service | Docker Hub image |
@@ -103,6 +103,9 @@ Named volumes retain the database, encryption key, certificates and audio files.
 The console runs from its image; an existing `./ui/app:/app` bind mount in a local
 override must be removed to use the published console code.
 
+Read the [0.2.0 release notes](docs/releases/v0.2.0.md) before upgrading from 0.1.x,
+including the Asterisk 20 transition, backup requirements and SIP TLS settings.
+
 To build from source, run `docker compose up -d --build`. For live console edits,
 add the development override:
 
@@ -116,7 +119,9 @@ The GitHub Actions workflow tests the call agent and console with a disposable
 PostgreSQL database before building all three images for `linux/amd64` and
 `linux/arm64`. Pushes to `main` publish `unstable`; tags beginning with `v` publish
 the matching image tag. Only stable `vMAJOR.MINOR.PATCH` tags also update `latest`;
-prereleases such as `v1.1.0-rc.1` leave it unchanged. Pull requests run tests without publishing. The workflow
+prereleases such as `v1.1.0-rc.1` leave it unchanged. After all three images are
+published, a stable tag also creates its GitHub Release from
+`docs/releases/<tag>.md`. Pull requests run tests without publishing. The workflow
 can also be started manually from **Actions → Build & Push Docker images**.
 
 In the PrismVox repository, add these Actions secrets under
